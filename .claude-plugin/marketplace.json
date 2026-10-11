@@ -1,0 +1,12 @@
+{
+  "name": "counterfact-labs",
+  "description": "Counterfact tools for checking agents from Claude Code.",
+  "owner": { "name": "Counterfact Labs" },
+  "plugins": [
+    {
+      "name": "counterfact",
+      "source": "./",
+      "description": "Check an agent's prompt, skills and tools with Counterfact."
+    }
+  ]
+}
