@@ -1,6 +1,6 @@
 # Counterfact for Claude Code
 
-Requires Node.js 20 or later. Once the npm package and marketplace are published:
+Requires Node.js 22 or later.
 
 1. Sign in (free, no card): `npx -y @counterfact-labs/cli login`. You can skip this; `/counterfact` asks the first time.
 
@@ -13,22 +13,22 @@ Requires Node.js 20 or later. Once the npm package and marketplace are published
 
    If `/counterfact` doesn't show up yet, run `/reload-plugins` (or restart Claude Code).
 
-3. Allow once, so auto mode doesn't stop checks: in Claude Code run `/permissions`, choose Allow and add `mcp__plugin_counterfact_counterfact__check_agent`. Only agent files from the folder you choose are uploaded; secret and ignored files are skipped. `/counterfact` offers to do this for you the first time.
+3. Allow once, so auto mode doesn't stop analyses: in Claude Code run `/permissions`, choose Allow, and add `mcp__plugin_counterfact_counterfact__analyze_agent`. Only agent files from the folder you choose are sent; secret and ignored files are skipped. `/counterfact` offers to do this for you the first time.
 
-4. Run: `/counterfact:counterfact ./support-agent`, or ask Claude to check your agent.
+   If you use Claude Code's sandbox, allow relay.counterfactlabs.com and app.counterfactlabs.com when Claude Code asks, or add both to the sandbox's allowed domains.
+
+4. Run: `/counterfact:counterfact ./support-agent`, or ask Claude to analyze your agent.
 
 The plugin uses `https://app.counterfactlabs.com` by default. Run the login command again after moving from the old address; saved sign-in belongs to the server address.
 
-Claude shows the selected files and price and asks for agreement before starting, including for a free check. After results, it offers to fix the most serious problem using the finding's explanation and suggested fixes. After edits, it suggests a check and waits for you to ask for it.
+When you ask for an analysis, Claude runs it and charges your balance. If your balance doesn't cover it, Claude shows a link to top up; prices are on the top-up page. After results, Claude offers to fix the most serious problem using the finding's explanation, quoted lines, and suggested fixes. After edits, it suggests an analysis and waits for you to ask for it.
 
-The plugin starts `npx -y @counterfact-labs/cli@latest mcp` on your computer and allows up to 15 minutes per tool call. A confirmed check keeps running on the server if the local wait stops. Find its result on the console's Checks page.
+Counterfact analyzes only committed files. If the folder has uncommitted changes, Claude offers to commit them first.
 
-Uploaded files stay with the check until it or the workspace is deleted. See the [command-line package](https://www.npmjs.com/package/@counterfact-labs/cli) for commands, privacy details and Codex setup.
+The plugin starts `npx -y @counterfact-labs/cli@latest mcp` on your computer and allows up to 15 minutes per tool call. Cancelling the tool call or reaching that limit stops the analysis. If an analysis is stopped before it finishes, run it again. Results appear on the project's findings page at the link Claude shows.
 
-For local validation, run `claude plugin validate packages/claude-plugin/.claude-plugin/plugin.json` and `claude plugin validate packages/claude-plugin/.claude-plugin/marketplace.json` from the product repository root. To try the plugin before publishing, start `claude --plugin-dir ./packages/claude-plugin`; its MCP server still needs the published npm package.
+The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, and only findings are saved to the console.
 
-To publish the marketplace, create a small public repository; the recommended name is `counterfact-labs/claude-plugins`. Copy only `.claude-plugin/`, `.mcp.json`, `commands/`, `skills/` and this README from `packages/claude-plugin/` into that repository's root. The marketplace resolves the plugin from `./`, so it works without the product source. Validate both JSON files in the copied folder before publishing. The install commands above become available after the public repository and npm package are published.
+Counterfact keeps the findings from each analysis until it or the workspace is deleted. See the [command-line package](https://www.npmjs.com/package/@counterfact-labs/cli) for commands, privacy details, and Codex setup.
 
 The file layout follows the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference) and [marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces). Claude Code namespaces the command as `/counterfact:counterfact`.
-
-To release the npm package from the product repository, set its version in `packages/cli/package.json`, commit the intended release and run `bash scripts/release-cli.sh`. The script requires a clean working tree, builds and tests the CLI, runs the plugin and release tests, checks types and lint, checks the tree again, then publishes the CLI with public access. It stops on any failed check. Publishing requires access to the `counterfact-labs` npm organisation.
