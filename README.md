@@ -27,7 +27,7 @@ Counterfact analyzes only committed files. If the folder has uncommitted changes
 
 The plugin starts `npx -y @counterfact-labs/cli@0.2.2 mcp` on your computer (an exact version, updated with each release) and allows up to 15 minutes per tool call. Cancelling the tool call or reaching that limit stops the analysis. If an analysis is stopped before it finishes, run it again. Results appear on the project's findings page at the link Claude shows.
 
-The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, and only findings are saved to the console.
+The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to your console.
 
 Counterfact keeps the findings from each analysis until it or the workspace is deleted. See the [command-line package](https://www.npmjs.com/package/@counterfact-labs/cli) for commands, privacy details, and Codex setup.
 
