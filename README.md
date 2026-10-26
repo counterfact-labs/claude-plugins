@@ -25,7 +25,7 @@ When you ask for an analysis, Claude runs it and charges your balance. If your b
 
 Counterfact analyzes only committed files. If the folder has uncommitted changes, Claude offers to commit them first.
 
-The plugin starts `npx -y @counterfact-labs/cli@0.2.2 mcp` on your computer (an exact version, updated with each release) and allows up to 15 minutes per tool call. Cancelling the tool call or reaching that limit stops the analysis. If an analysis is stopped before it finishes, run it again. Results appear on the project's findings page at the link Claude shows.
+The plugin starts `npx -y @counterfact-labs/cli@0.2.3 mcp` on your computer (an exact version, updated with each release) and allows up to 15 minutes per tool call. Cancelling the tool call or reaching that limit stops the analysis. If an analysis is stopped before it finishes, run it again. Results appear on the project's findings page at the link Claude shows.
 
 The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to your console.
 
