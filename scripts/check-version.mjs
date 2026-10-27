@@ -54,9 +54,13 @@ if (plugin?.version !== version) {
 }
 // Login is version-independent, so its unpinned README command is allowed.
 // Users copy versioned commands; those must match the CLI the plugin runs.
-for (const mention of readme.matchAll(/@counterfact-labs\/cli@([^\s`'"]*?)(?=[.,;:)]?(?:\s|$|[`'"]))/g)) {
+for (const mention of readme.matchAll(/@counterfact-labs\/cli@([^\s`'"]*?)(?=[.,;:)]*(?:\s|$|[`'"]))/g)) {
   if (mention[1] !== version) {
     fail(`README.md mentions @counterfact-labs/cli@${mention[1]}; expected ${version}.`);
   }
+}
+// A missing startup pin would hide drift even when every remaining mention agrees.
+if (!readme.includes('`npx -y ' + prefix + version + ' mcp`')) {
+  fail(`README.md must include a pinned npx ${prefix}${version} mcp command.`);
 }
 console.log(`Plugin, CLI pin, and README versions agree at ${version}.`);

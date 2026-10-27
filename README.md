@@ -21,11 +21,9 @@ Requires Node.js 22 or later.
 
 The plugin uses `https://app.counterfactlabs.com` by default. Run the login command again after moving from the old address; saved sign-in belongs to the server address.
 
-When you ask for an analysis, Claude runs it and charges your balance. If your balance doesn't cover it, Claude shows a link to top up; prices are on the top-up page. After results, Claude offers to fix the most serious problem using the finding's explanation, quoted lines, and suggested fixes. After edits, it suggests an analysis and waits for you to ask for it.
+When you ask for an analysis, Claude runs it and charges your balance. If your balance doesn't cover it, Claude shows a link to top up; prices are on the top-up page. After results, Claude shows the full-results link and every finding, then offers to fix the most serious finding, preferring ones that affect the agent's users. It uses the finding's explanation, quoted lines, and suggested fixes. After edits, it suggests an analysis and waits for you to ask for it.
 
-Counterfact analyzes only committed files. If the folder has uncommitted changes, Claude offers to commit them first.
-
-The plugin starts `npx -y @counterfact-labs/cli@0.2.4 mcp` on your computer (an exact version, updated with each release) and allows up to 15 minutes per tool call. Cancelling the tool call or reaching that limit stops the analysis. If an analysis is stopped before it finishes, run it again. Results appear on the project's findings page at the link Claude shows.
+The plugin starts `npx -y @counterfact-labs/cli@0.2.5 mcp` on your computer (an exact version, updated with each release) and allows up to 15 minutes per tool call. Cancelling the tool call or reaching that limit stops the analysis. If an analysis is stopped before it finishes, run it again. Results appear on the project's findings page at the link Claude shows. The plugin version follows the CLI version, so `claude plugin update counterfact@counterfact-labs` picks up new releases.
 
 The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to your console.
 
