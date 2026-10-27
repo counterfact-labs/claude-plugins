@@ -10,6 +10,20 @@ const script = fileURLToPath(new URL('./check-version.mjs', import.meta.url));
 
 const cases = [
   { name: 'accepts matching versions', status: 0 },
+  {
+    name: 'accepts the 0.2.5 plugin, CLI, and README example',
+    pin: '0.2.5',
+    version: '0.2.5',
+    readme: 'The plugin starts `npx -y @counterfact-labs/cli@0.2.5 mcp` on your computer.',
+    status: 0,
+  },
+  {
+    name: 'accepts a future release when all three versions advance together',
+    pin: '0.2.6',
+    version: '0.2.6',
+    readme: 'The plugin starts `npx -y @counterfact-labs/cli@0.2.6 mcp` on your computer.',
+    status: 0,
+  },
   { name: 'rejects latest', pin: 'latest', error: /pin latest.*exact X\.Y\.Z/ },
   { name: 'rejects a range', pin: '^1.2.3', error: /exact X\.Y\.Z/ },
   { name: 'rejects a partial version', pin: '1.2', error: /exact X\.Y\.Z/ },
@@ -27,10 +41,22 @@ const cases = [
   },
   { name: 'rejects latest in README', readme: '`@counterfact-labs/cli@latest`', error: /README\.md.*@latest/ },
   { name: 'rejects an empty README pin', readme: '`@counterfact-labs/cli@`', error: /README\.md/ },
-  { name: 'accepts README without a pin', readme: 'Run `npx -y @counterfact-labs/cli login`.', status: 0 },
+  { name: 'rejects README without a startup pin', readme: 'Run `npx -y @counterfact-labs/cli login`.', error: /README\.md must include/ },
+  {
+    name: 'rejects an unpinned startup command even when another mention agrees',
+    pin: '0.2.5',
+    version: '0.2.5',
+    readme: 'CLI version: `@counterfact-labs/cli@0.2.5`. Start `npx -y @counterfact-labs/cli mcp`.',
+    error: /README\.md must include a pinned npx .* mcp command/,
+  },
   {
     name: 'accepts punctuation after README pins',
-    readme: '@counterfact-labs/cli@1.2.3. (@counterfact-labs/cli@1.2.3) `@counterfact-labs/cli@1.2.3,` @counterfact-labs/cli@1.2.3; @counterfact-labs/cli@1.2.3:',
+    readme: '`npx -y @counterfact-labs/cli@1.2.3 mcp` @counterfact-labs/cli@1.2.3. (@counterfact-labs/cli@1.2.3) `@counterfact-labs/cli@1.2.3,` @counterfact-labs/cli@1.2.3; @counterfact-labs/cli@1.2.3:',
+    status: 0,
+  },
+  {
+    name: 'accepts a parenthesized README pin followed by a period',
+    readme: '`npx -y @counterfact-labs/cli@1.2.3 mcp` (@counterfact-labs/cli@1.2.3).',
     status: 0,
   },
   { name: 'rejects a README pin with build metadata', readme: '`@counterfact-labs/cli@1.2.3+build`', error: /README\.md/ },
@@ -87,7 +113,7 @@ for (const fixture of cases) {
     };
     writeFileSync(join(root, '.mcp.json'), typeof mcp === 'string' ? mcp : JSON.stringify(mcp));
     writeFileSync(join(root, 'README.md'), fixture.readme ??
-      '`@counterfact-labs/cli@1.2.3` and `@counterfact-labs/cli@1.2.3`');
+      '`npx -y @counterfact-labs/cli@1.2.3 mcp` and `@counterfact-labs/cli@1.2.3`');
 
     // Exercise the CLI boundary; errors must be single-line and period-terminated.
     const result = spawnSync(process.execPath, [script, root], { encoding: 'utf8' });
@@ -98,7 +124,7 @@ for (const fixture of cases) {
       assert.match(result.stderr, /^[^\r\n]+\.\n$/);
     } else {
       assert.equal(result.stderr, '');
-      assert.match(result.stdout, /^[^\r\n]*1\.2\.3[^\r\n]*\n$/);
+      assert.equal(result.stdout, `Plugin, CLI pin, and README versions agree at ${fixture.pin ?? '1.2.3'}.\n`);
     }
   });
 }
