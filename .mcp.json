@@ -2,7 +2,7 @@
   "mcpServers": {
     "counterfact": {
       "command": "npx",
-      "args": ["-y", "@counterfact-labs/cli@0.2.3", "mcp"],
+      "args": ["-y", "@counterfact-labs/cli@0.2.4", "mcp"],
       "timeout": 900000
     }
   }
