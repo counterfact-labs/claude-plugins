@@ -1,0 +1,22 @@
+name: Check plugin version
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: { contents: read }
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test version check
+        run: node --test scripts/check-version.test.mjs
+      # Catch stale plugin metadata before a CLI pin change can ship.
+      - name: Check plugin version
+        run: node scripts/check-version.mjs
