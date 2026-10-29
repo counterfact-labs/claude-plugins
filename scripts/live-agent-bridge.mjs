@@ -4,6 +4,23 @@ import { resolve } from 'node:path';
 
 export const consoleOrigin = 'https://app.counterfactlabs.com';
 
+const fixedEndpoints = new Map([
+  ['/api/cli/checks', '/api/cli/checks'], ['/api/cli/checks/mode', '/api/cli/checks/mode'],
+  ['/api/cli/checks/local', '/api/cli/checks/local'], ['/api/cli/relay-reservations', '/api/cli/relay-reservations'],
+  ['/api/cli/balance', '/api/cli/balance'], ['/api/cli/fix-requests', '/api/cli/fix-requests'],
+]);
+export function consoleUrl(path) {
+  const [route, query = ''] = String(path).split('?', 2);
+  let endpoint = fixedEndpoints.get(route);
+  const finding = /^\/api\/cli\/findings\/([\w-]+)$/.exec(route);
+  if (!endpoint && finding) endpoint = '/api/cli/findings/' + encodeURIComponent(finding[1]);
+  if (!endpoint || (query && route !== '/api/cli/fix-requests')) throw new Error('Unexpected console endpoint');
+  const search = new URLSearchParams();
+  for (const [name, value] of new URLSearchParams(query)) search.append(name, value);
+  const text = search.toString();
+  return consoleOrigin + endpoint + (text ? '?' + text : '');
+}
+
 // The account key lives only here. MCP gets a sentinel credential; this transport
 // attaches the real bearer token only to the production console's HTTPS requests.
 export async function startBridge({ key, budget, folder }) {
@@ -17,10 +34,9 @@ export async function startBridge({ key, budget, folder }) {
     return new Error(message);
   };
   const upstream = async (path, method, body, headers = {}) => {
-    // Only same-origin console API paths may carry the account key.
-    if (typeof path !== 'string' || !path.startsWith('/api/')) throw fail('Refused non-API console path');
-    // The host is fixed by the literal prefix ending in '/', so the path cannot change it.
-    const response = await fetch(`${consoleOrigin}/${path.slice(1)}`, {
+    // Only known console API endpoints may carry the account key. The URL is rebuilt
+    // from constants plus encoded segments, so no caller value reaches it verbatim.
+    const response = await fetch(consoleUrl(path), {
       method, headers: { ...headers, authorization: `Bearer ${key}` },
       ...(method === 'GET' ? {} : { body }), redirect: 'error', signal: AbortSignal.timeout(20_000),
     });
