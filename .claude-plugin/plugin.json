@@ -1,6 +1,10 @@
 {
   "name": "counterfact",
+<<<<<<< HEAD
   "version": "0.2.11",
+=======
+  "version": "0.2.10",
+>>>>>>> origin/main
   "description": "Analyze an agent's prompt, skills, and tools with Counterfact.",
   "author": { "name": "Counterfact Labs" }
 }
