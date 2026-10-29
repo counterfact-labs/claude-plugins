@@ -1,6 +1,6 @@
 # Plugin wording approval: 2026-10-29
 
-Status: **Pending Arya's approval.** No approval is implied by implementing these changes in the worktree.
+Status: **Approved by Arya on October 29, 2026.**
 
 Every changed sentence in the skill and README is included verbatim below, with its previous wording. Full affected paragraphs preserve context; approval is requested for the changed sentences. Each item is pending Arya's approval before merge or publication.
 
@@ -8,7 +8,7 @@ Every changed sentence in the skill and README is included verbatim below, with 
 
 File: `skills/counterfact-analyze/SKILL.md`
 
-Status: **Pending Arya's approval.**
+Status: **Approved by Arya on October 29, 2026.**
 
 Before:
 
@@ -26,7 +26,7 @@ After:
 
 File: `skills/counterfact-analyze/SKILL.md`
 
-Status: **Pending Arya's approval.**
+Status: **Approved by Arya on October 29, 2026.**
 
 Before:
 
@@ -44,7 +44,7 @@ After:
 
 File: `README.md`
 
-Status: **Pending Arya's approval.**
+Status: **Approved by Arya on October 29, 2026.**
 
 Before:
 
@@ -62,7 +62,7 @@ The plugin starts `npx -y @counterfact-labs/cli@0.2.9 mcp` on your computer (an 
 
 File: `README.md`
 
-Status: **Pending Arya's approval.**
+Status: **Approved by Arya on October 29, 2026.**
 
 Before:
 
