@@ -8,7 +8,8 @@ import test from 'node:test';
 import { startBridge } from './live-agent-bridge.mjs';
 
 const script = fileURLToPath(new URL('./live-agent-check.sh', import.meta.url));
-const fixtureSource = '/home/user/code/counterfact-local/example-agents/bramblewood-support/system_prompt.md';
+const fixtureDir = fileURLToPath(new URL('./fixtures/live-agent/', import.meta.url));
+const fixtureSource = join(fixtureDir, 'system_prompt.md');
 
 // The real harness, stdio adapter, credential adapter and HTTP budget gate run.
 // Only coding agents, npm and the remote console transport are replaced.
@@ -22,6 +23,7 @@ const args = process.argv.slice(2);
 const mode = process.env.FAKE_MODE;
 const log = value => fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(value) + '\\n');
 log({name, args, home: process.env.HOME, cwd: process.cwd(), keyPresent: !!process.env.COUNTERFACT_LIVE_TEST_KEY,
+  prompt: fs.existsSync('system_prompt.md') ? fs.readFileSync('system_prompt.md', 'utf8') : null,
   codexHome: process.env.CODEX_HOME, claudeHome: process.env.CLAUDE_CONFIG_DIR, npmCache: process.env.npm_config_cache});
 const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
 if (name === 'npx') {
@@ -135,7 +137,7 @@ globalThis.fetch=async (input,options={})=>{
 };
 `;
 
-async function run(t, args = ['run', '--confirm-paid'], mode = 'ok', key = 'fictional-live-key', emptyPath = false) {
+async function run(t, args = ['run', '--confirm-paid'], mode = 'ok', key = 'fictional-live-key', emptyPath = false, agentDir = fixtureDir) {
   const root = mkdtempSync(join(tmpdir(), 'live-agent-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, 'bin'); mkdirSync(bin);
@@ -156,7 +158,7 @@ async function run(t, args = ['run', '--confirm-paid'], mode = 'ok', key = 'fict
     CF_CONSOLE_URL:'https://do-not-use.invalid',COUNTERFACT_URL:'https://do-not-use.invalid',
     ANTHROPIC_API_KEY:'fictional-provider-key',CODEX_API_KEY:'fictional-provider-key'};
   const started=Date.now();
-  const child=spawn('bash',[script,...args],{env,cwd:root,detached:true,stdio:['ignore','pipe','pipe']});
+  const child=spawn('bash',[script,...args,...(agentDir ? ['--agent-dir',agentDir] : [])],{env,cwd:root,detached:true,stdio:['ignore','pipe','pipe']});
   let stdout='',stderr='';child.stdout.on('data',s=>stdout+=s);child.stderr.on('data',s=>stderr+=s);
   const kill=()=>{try{process.kill(-child.pid,'SIGKILL');}catch{ /* Already exited. */ }};
   t.after(kill);
@@ -166,10 +168,38 @@ async function run(t, args = ['run', '--confirm-paid'], mode = 'ok', key = 'fict
   return {status,stdout,stderr,calls,root,duration:Date.now()-started};
 }
 
+test('check without an agent directory preserves the existing local default',async t=>{
+  const r=await run(t,['check'],'ok','',false,null);
+  assert.equal(r.status,0,r.stderr);
+  assert.deepEqual(r.calls,[]);
+  assert.match(r.stdout,/Copy \/home\/user\/code\/counterfact-local\/example-agents\/bramblewood-support separately/);
+});
+
+test('custom agent directory is previewed and copied independently for both providers',async t=>{
+  const source=mkdtempSync(join(tmpdir(),'live custom agent-'));
+  t.after(()=>rmSync(source,{recursive:true,force:true}));
+  const prompt='You assist a fictional paper shop with notebook questions.\n';
+  writeFileSync(join(source,'system_prompt.md'),prompt);
+  const preview=await run(t,['check'],'ok','',false,source);
+  assert.equal(preview.status,0,preview.stderr);
+  assert.ok(preview.stdout.includes(source));assert.deepEqual(preview.calls,[]);
+  const r=await run(t,undefined,'ok','fictional-live-key',false,source);
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  const agents=r.calls.filter(c=>c.name==='claude'&&c.args.includes('-p')||c.name==='codex');
+  assert.equal(agents.length,2);
+  for(const agent of agents)assert.equal(agent.prompt,prompt);
+  assert.equal(readFileSync(join(source,'system_prompt.md'),'utf8'),prompt);
+});
+
+for(const value of ['', '--max-dollars'])test('rejects invalid agent directory '+JSON.stringify(value),async t=>{
+  const r=await run(t,['check','--agent-dir',value]);
+  assert.notEqual(r.status,0);assert.match(r.stderr,/Invalid --agent-dir/);assert.deepEqual(r.calls,[]);
+});
+
 test('check describes published installs, both prompts, isolation and cost gate without launching tools',async t=>{
   const r=await run(t,['check','--max-dollars','2.50'],'ok','');
   assert.equal(r.status,0,r.stderr);assert.deepEqual(r.calls,[]);
-  for(const pattern of [/claude plugin marketplace add.*main/,/claude plugin install counterfact@counterfact-labs/,/claude -p/,/codex exec/,/@counterfact-labs\/cli@latest/,/2\.50/,/--confirm-paid/,/COUNTERFACT_LIVE_TEST_KEY/,/bramblewood-support/,/No network/])assert.match(r.stdout,pattern);
+  for(const pattern of [/claude plugin marketplace add.*main/,/claude plugin install counterfact@counterfact-labs/,/claude -p/,/codex exec/,/@counterfact-labs\/cli@latest/,/2\.50/,/--confirm-paid/,/COUNTERFACT_LIVE_TEST_KEY/,/scripts\/fixtures\/live-agent/,/No network/])assert.match(r.stdout,pattern);
 });
 
 for(const [args,key,pattern] of [

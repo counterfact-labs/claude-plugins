@@ -7,12 +7,12 @@ import { consoleOrigin, startBridge } from './live-agent-bridge.mjs';
 
 const example = '/home/user/code/counterfact-local/example-agents/bramblewood-support';
 const adapter = fileURLToPath(new URL('./live-agent-mcp.mjs', import.meta.url));
-const usage = 'Usage: scripts/live-agent-check.sh <check|run> [--confirm-paid] [--max-dollars 5] [--timeout-seconds 1200]';
+const usage = 'Usage: scripts/live-agent-check.sh <check|run> [--confirm-paid] [--max-dollars 5] [--timeout-seconds 1200] [--agent-dir path]';
 const quote = text => /^[a-zA-Z0-9_@%+=:,./#-]+$/.test(text) ? text : "'" + text.replaceAll("'", "'\\''") + "'";
 function options(args) {
   const mode = args.shift();
   if (!['check', 'run'].includes(mode)) throw Error(usage);
-  let max = '5', seconds = '1200', confirmed = false;
+  let max = '5', seconds = '1200', confirmed = false, agentDir = example;
   const seen = new Set();
   while (args.length) {
     const flag = args.shift();
@@ -21,7 +21,10 @@ function options(args) {
     if (flag === '--confirm-paid') confirmed = true;
     else if (flag === '--max-dollars') max = args.shift() ?? '';
     else if (flag === '--timeout-seconds') seconds = args.shift() ?? '';
-    else throw Error(usage);
+    else if (flag === '--agent-dir') {
+      agentDir = args.shift();
+      if (!agentDir?.trim() || agentDir.startsWith('--')) throw Error('Invalid --agent-dir; use a directory path');
+    } else throw Error(usage);
   }
   if (!/^\d+(?:\.\d{1,6})?$/.test(max) || Number(max) <= 0 ||
       !Number.isSafeInteger(Math.round(Number(max) * 1e6))) {
@@ -31,11 +34,11 @@ function options(args) {
       Number(seconds) < 1 || Number(seconds) > 3600) {
     throw Error('Invalid --timeout-seconds; use 1-3600');
   }
-  return { mode, cap: Math.round(Number(max) * 1e6), seconds: Number(seconds), confirmed };
+  return { mode, cap: Math.round(Number(max) * 1e6), seconds: Number(seconds), confirmed, agentDir: resolve(agentDir) };
 }
 function prompt(backend) {
   return (backend === 'claude' ? '/counterfact:counterfact .\n' : '') +
-    'Analyze the fictional bramblewood-support agent in the current folder with Counterfact exactly once. ' +
+    'Analyze the fictional agent in the current folder with Counterfact exactly once. ' +
     'Use the Counterfact MCP tools' + (backend === 'claude' ? ' and the installed Counterfact skill' : '') + '. ' +
     'Sign-in is configured and analysis permission is granted for this release analysis. Decline any waiting fixes. ' +
     'Use path "."; do not change files, use shell commands, inspect credentials or environment, sign in again, retry, or run additional analyses. ' +
@@ -53,7 +56,7 @@ function commands(backend) {
 function preview(config) {
   console.log('Live agent release analysis preview. No network calls or executables.');
   console.log(`Total Counterfact analysis estimate cap: $${(config.cap / 1e6).toFixed(2)}. run requires --confirm-paid and COUNTERFACT_LIVE_TEST_KEY.`);
-  console.log(`Copy ${example} separately for Claude and Codex under a private temporary directory.`);
+  console.log(`Copy ${config.agentDir} separately for Claude and Codex under a private temporary directory.`);
   console.log('Each gets fresh HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, XDG directories, and npm cache; use provider credentials from environment only.');
   console.log('Install an npx stdio adapter ahead of PATH. It launches the published MCP server, captures actual protocol replies, and permits one analysis per agent.');
   console.log('Codex config: npx -y @counterfact-labs/cli@latest mcp; startup_timeout_sec=120; tool_timeout_sec=900; approval_policy=never.');
@@ -204,7 +207,7 @@ async function main() {
       try {
         if (cancellation.signal.aborted) throw Error('Interrupted');
         mkdirSync(bin, { recursive: true });
-        cpSync(example, folder, { recursive: true, filter: path => { if (lstatSync(path).isSymbolicLink()) throw Error('Example must not contain symlinks'); return true; } });
+        cpSync(config.agentDir, folder, { recursive: true, filter: path => { if (lstatSync(path).isSymbolicLink()) throw Error('Example must not contain symlinks'); return true; } });
         configure(home, bin);
         writeFileSync(join(bin, 'npx'), `#!/usr/bin/env bash\nexec ${quote(process.execPath)} ${quote(adapter)} "$@"\n`, { mode: 0o700 });
         bridge = await startBridge({ key, budget, folder });
