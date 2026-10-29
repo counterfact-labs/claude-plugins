@@ -6,13 +6,12 @@ export function isStableVersion(version) {
   return typeof version === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version);
 }
 
-// Callers validate stable versions first so each command keeps its own diagnostics.
+// Callers validate stable X.Y.Z versions before comparing them.
 export function compareVersions(a, b) {
-  const left = a.split('.').map(BigInt);
-  const right = b.split('.').map(BigInt);
-  const different = left.findIndex((part, index) => part !== right[index]);
-  if (different === -1) return 0;
-  return left[different] < right[different] ? -1 : 1;
+  const aParts = a.split('.').map(BigInt);
+  const bParts = b.split('.').map(BigInt);
+  const difference = aParts.findIndex((part, index) => part !== bParts[index]);
+  return difference === -1 ? 0 : aParts[difference] > bParts[difference] ? 1 : -1;
 }
 
 export function cliPin(root) {

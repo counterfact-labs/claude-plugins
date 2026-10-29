@@ -42,12 +42,13 @@ for (const value of strings(mcp)) {
   }
 }
 
-// Wording-only releases bump Claude Code's plugin cache without changing the CLI.
+// The bump gate catches .mcp.json changes so Claude Code refreshes its versioned cache.
+// This check only stops the plugin version from falling behind the CLI it starts.
 if (!isStableVersion(plugin?.version)) {
-  fail(`Plugin version ${plugin?.version} must be an exact X.Y.Z version.`);
+  fail(`plugin.json version ${plugin?.version} must be an exact X.Y.Z version.`);
 }
 if (compareVersions(plugin.version, version) < 0) {
-  fail(`Plugin version ${plugin.version} must be at least the CLI pin ${version}.`);
+  fail(`plugin.json version ${plugin.version} must be at least the CLI pin ${version}.`);
 }
 // Login is version-independent, so its unpinned README command is allowed.
 // Users copy versioned commands; those must match the CLI the plugin runs.
@@ -60,6 +61,4 @@ for (const mention of readme.matchAll(/@counterfact-labs\/cli@([^\s`'"]*?)(?=[.,
 if (!readme.includes('`npx -y ' + pin + ' mcp`')) {
   fail(`README.md must include a pinned npx ${pin} mcp command.`);
 }
-console.log(plugin.version === version
-  ? `Plugin, CLI pin, and README versions agree at ${version}.`
-  : `Plugin ${plugin.version} uses CLI ${version}; MCP pin and README versions agree.`);
+console.log(`Plugin version ${plugin.version} is valid; CLI pin and README versions agree at ${version}.`);
