@@ -218,7 +218,7 @@ test('both released integrations complete with isolated homes, real MCP evidence
   assert.match(r.stdout,/PASS.*Claude/);assert.match(r.stdout,/PASS.*Codex/);
   assert.match(r.stdout,/\$1\.00/);assert.match(r.stdout,/\$0\.04/);assert.match(r.stdout,/duration|[0-9.]+s/);
   assert.match(r.stdout,/charged \(equals estimate\) \$1\.00/);
-  assert.match(r.stdout,/https:\/\/app.counterfactlabs.com\/projects\/project-1\/findings/);
+  assert.match(r.stdout,/https:\/\/app\.counterfactlabs\.com\/projects\/project-1\/findings/);
   const agents=r.calls.filter(c=>c.name==='claude'&&c.args.includes('-p')||c.name==='codex');assert.equal(agents.length,2);
   assert.notEqual(agents[0].home,agents[1].home);
   for(const a of agents){assert.equal(a.keyPresent,false);assert.ok(a.cwd.startsWith(a.home.slice(0,a.home.lastIndexOf('/'))));assert.equal(existsSync(a.home),false);assert.equal(existsSync(a.cwd),false);}

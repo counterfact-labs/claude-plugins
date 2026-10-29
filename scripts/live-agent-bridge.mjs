@@ -17,7 +17,11 @@ export async function startBridge({ key, budget, folder }) {
     return new Error(message);
   };
   const upstream = async (path, method, body, headers = {}) => {
-    const response = await fetch(consoleOrigin + path, {
+    // Only same-origin console API paths may carry the account key.
+    if (typeof path !== 'string' || !path.startsWith('/api/')) throw fail('Refused non-API console path');
+    const url = new URL(path, consoleOrigin);
+    if (url.origin !== consoleOrigin) throw fail('Refused cross-origin console path');
+    const response = await fetch(url, {
       method, headers: { ...headers, authorization: `Bearer ${key}` },
       ...(method === 'GET' ? {} : { body }), redirect: 'error', signal: AbortSignal.timeout(20_000),
     });
