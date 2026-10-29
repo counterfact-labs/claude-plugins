@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cliPin } from './plugin-release.mjs';
+import { cliPin, compareVersions, isStableVersion } from './plugin-release.mjs';
 
 // The optional root lets tests point the script at a fixture directory.
 const root = process.argv[2] ?? fileURLToPath(new URL('../', import.meta.url));
@@ -42,9 +42,12 @@ for (const value of strings(mcp)) {
   }
 }
 
-// Claude Code caches plugins by their own version, so a CLI bump must bump both.
-if (plugin?.version !== version) {
-  fail(`plugin.json version ${plugin?.version} must match the CLI pin ${version}.`);
+// Wording-only releases bump Claude Code's plugin cache without changing the CLI.
+if (!isStableVersion(plugin?.version)) {
+  fail(`Plugin version ${plugin?.version} must be an exact X.Y.Z version.`);
+}
+if (compareVersions(plugin.version, version) < 0) {
+  fail(`Plugin version ${plugin.version} must be at least the CLI pin ${version}.`);
 }
 // Login is version-independent, so its unpinned README command is allowed.
 // Users copy versioned commands; those must match the CLI the plugin runs.
@@ -57,4 +60,6 @@ for (const mention of readme.matchAll(/@counterfact-labs\/cli@([^\s`'"]*?)(?=[.,
 if (!readme.includes('`npx -y ' + pin + ' mcp`')) {
   fail(`README.md must include a pinned npx ${pin} mcp command.`);
 }
-console.log(`Plugin, CLI pin, and README versions agree at ${version}.`);
+console.log(plugin.version === version
+  ? `Plugin, CLI pin, and README versions agree at ${version}.`
+  : `Plugin ${plugin.version} uses CLI ${version}; MCP pin and README versions agree.`);

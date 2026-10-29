@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: '22'
       - name: Test plugin release checks
-        run: node --test scripts/check-version.test.mjs scripts/smoke-mcp.test.mjs scripts/check-plugin-bump.test.mjs
+        run: node --test scripts/plugin-release.test.mjs scripts/check-version.test.mjs scripts/smoke-mcp.test.mjs scripts/check-plugin-bump.test.mjs scripts/skipped-files-consent.test.mjs scripts/privacy-notice.test.mjs
       # Catch stale plugin metadata before a CLI pin change can ship.
       - name: Check plugin version
         run: node scripts/check-version.mjs

@@ -11,6 +11,26 @@ const script = fileURLToPath(new URL('./check-version.mjs', import.meta.url));
 const cases = [
   { name: 'accepts matching versions', status: 0 },
   {
+    name: 'accepts a plugin-only patch release without changing the CLI pin',
+    version: '1.2.4',
+    status: 0,
+    stdout: 'Plugin 1.2.4 uses CLI 1.2.3; MCP pin and README versions agree.\n',
+  },
+  {
+    name: 'accepts a plugin-only minor release',
+    version: '1.10.0',
+    status: 0,
+    stdout: 'Plugin 1.10.0 uses CLI 1.2.3; MCP pin and README versions agree.\n',
+  },
+  {
+    name: 'accepts a plugin-only major release',
+    version: '2.0.0',
+    status: 0,
+    stdout: 'Plugin 2.0.0 uses CLI 1.2.3; MCP pin and README versions agree.\n',
+  },
+  { name: 'rejects an invalid plugin version', version: 'latest', error: /Plugin version latest.*exact X\.Y\.Z/ },
+  { name: 'rejects a prerelease plugin version', version: '1.2.4-rc.1', error: /Plugin version 1\.2\.4-rc\.1.*exact X\.Y\.Z/ },
+  {
     name: 'accepts the 0.2.5 plugin, CLI, and README example',
     pin: '0.2.5',
     version: '0.2.5',
@@ -30,9 +50,9 @@ const cases = [
   { name: 'rejects leading zeroes', pin: '01.2.3', error: /exact X\.Y\.Z/ },
   { name: 'rejects a prerelease', pin: '1.2.3-rc.1', error: /exact X\.Y\.Z/ },
   {
-    name: 'rejects a mismatched plugin version',
+    name: 'rejects a plugin version older than the CLI pin',
     version: '1.2.2',
-    error: /plugin\.json version 1\.2\.2.*CLI pin 1\.2\.3/,
+    error: /Plugin version 1\.2\.2 must be at least the CLI pin 1\.2\.3/,
   },
   {
     name: 'rejects a later mismatched README mention',
@@ -124,7 +144,7 @@ for (const fixture of cases) {
       assert.match(result.stderr, /^[^\r\n]+\.\n$/);
     } else {
       assert.equal(result.stderr, '');
-      assert.equal(result.stdout, `Plugin, CLI pin, and README versions agree at ${fixture.pin ?? '1.2.3'}.\n`);
+      assert.equal(result.stdout, fixture.stdout ?? `Plugin, CLI pin, and README versions agree at ${fixture.pin ?? '1.2.3'}.\n`);
     }
   });
 }

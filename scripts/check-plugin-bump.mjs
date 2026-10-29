@@ -1,16 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { isStableVersion } from './plugin-release.mjs';
+import { compareVersions, isStableVersion } from './plugin-release.mjs';
 
 const root = process.argv[2] ?? fileURLToPath(new URL('../', import.meta.url));
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-
-function versionParts(version) {
-  if (!isStableVersion(version)) {
-    throw new Error(`Plugin version ${version} must be an exact X.Y.Z version.`);
-  }
-  return version.split('.').map(BigInt);
-}
 
 try {
   const base = process.env.PLUGIN_BASE_REF;
@@ -33,10 +26,12 @@ try {
     // The target may have released another version since the PR branched.
     const previous = readVersion(base);
     const current = readVersion('HEAD');
-    const oldParts = versionParts(previous);
-    const newParts = versionParts(current);
-    const different = newParts.findIndex((part, index) => part !== oldParts[index]);
-    if (different === -1 || newParts[different] < oldParts[different]) {
+    for (const version of [previous, current]) {
+      if (!isStableVersion(version)) {
+        throw new Error(`Plugin version ${version} must be an exact X.Y.Z version.`);
+      }
+    }
+    if (compareVersions(current, previous) <= 0) {
       throw new Error(`Plugin content changed; plugin version must increase from ${previous} (found ${current}).`);
     }
     console.log(`Plugin content changed with a version increase from ${previous} to ${current}.`);

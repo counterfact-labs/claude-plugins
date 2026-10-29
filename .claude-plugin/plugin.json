@@ -1,6 +1,6 @@
 {
   "name": "counterfact",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Analyze an agent's prompt, skills, and tools with Counterfact.",
   "author": { "name": "Counterfact Labs" }
 }
