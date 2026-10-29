@@ -6,6 +6,14 @@ export function isStableVersion(version) {
   return typeof version === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version);
 }
 
+// Callers validate stable X.Y.Z versions before comparing them.
+export function compareVersions(a, b) {
+  const aParts = a.split('.').map(BigInt);
+  const bParts = b.split('.').map(BigInt);
+  const difference = aParts.findIndex((part, index) => part !== bParts[index]);
+  return difference === -1 ? 0 : aParts[difference] > bParts[difference] ? 1 : -1;
+}
+
 export function cliPin(root) {
   let mcp;
   try {
