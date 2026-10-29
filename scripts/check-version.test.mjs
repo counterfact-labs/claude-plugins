@@ -24,6 +24,22 @@ const cases = [
     readme: 'The plugin starts `npx -y @counterfact-labs/cli@0.2.6 mcp` on your computer.',
     status: 0,
   },
+  {
+    name: 'accepts a plugin-only skill release with the existing CLI pin',
+    pin: '0.2.9',
+    version: '0.2.10',
+    readme: 'The plugin starts `npx -y @counterfact-labs/cli@0.2.9 mcp` on your computer.',
+    status: 0,
+  },
+  { name: 'accepts a plugin minor release ahead of the CLI', version: '1.3.0', status: 0 },
+  { name: 'accepts a plugin major release ahead of the CLI', version: '2.0.0', status: 0 },
+  {
+    name: 'compares plugin and CLI patch versions numerically',
+    pin: '1.2.9',
+    version: '1.2.10',
+    readme: '`npx -y @counterfact-labs/cli@1.2.9 mcp`',
+    status: 0,
+  },
   { name: 'rejects latest', pin: 'latest', error: /pin latest.*exact X\.Y\.Z/ },
   { name: 'rejects a range', pin: '^1.2.3', error: /exact X\.Y\.Z/ },
   { name: 'rejects a partial version', pin: '1.2', error: /exact X\.Y\.Z/ },
@@ -33,6 +49,22 @@ const cases = [
     name: 'rejects a mismatched plugin version',
     version: '1.2.2',
     error: /plugin\.json version 1\.2\.2.*CLI pin 1\.2\.3/,
+  },
+  ...['latest', '1.2.4-rc.1', '1.2.4+build', '01.2.4', '1.2', 123].map((version) => ({
+    name: `rejects a non-stable plugin version ${version}`,
+    version,
+    error: /plugin\.json version .*exact X\.Y\.Z/,
+  })),
+  {
+    name: 'rejects an older plugin even when its patch number is larger',
+    version: '1.1.99',
+    error: /plugin\.json version 1\.1\.99.*CLI pin 1\.2\.3/,
+  },
+  {
+    name: 'rejects an outdated README when the plugin is ahead of the CLI',
+    version: '1.2.4',
+    readme: '`npx -y @counterfact-labs/cli@1.2.4 mcp`',
+    error: /README\.md.*@counterfact-labs\/cli@1\.2\.4.*expected 1\.2\.3/,
   },
   {
     name: 'rejects a later mismatched README mention',
@@ -124,7 +156,7 @@ for (const fixture of cases) {
       assert.match(result.stderr, /^[^\r\n]+\.\n$/);
     } else {
       assert.equal(result.stderr, '');
-      assert.equal(result.stdout, `Plugin, CLI pin, and README versions agree at ${fixture.pin ?? '1.2.3'}.\n`);
+      assert.equal(result.stdout, `Plugin version ${fixture.version ?? '1.2.3'} is valid; CLI pin and README versions agree at ${fixture.pin ?? '1.2.3'}.\n`);
     }
   });
 }
