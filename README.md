@@ -13,7 +13,7 @@ Requires Node.js 22 or later.
 
    If `/counterfact` doesn't show up yet, run `/reload-plugins` (or restart Claude Code).
 
-3. Allow once, so auto mode doesn't stop analyses: in Claude Code run `/permissions`, choose Allow, and add `mcp__plugin_counterfact_counterfact__analyze_agent`. Only agent files from the folder you choose are sent; secret and ignored files are skipped. `/counterfact` offers to do this for you the first time.
+3. Allow once, so auto mode doesn't stop analyses: in Claude Code run `/permissions`, choose Allow, and add `mcp__plugin_counterfact_counterfact__analyze_agent`. Only the agent files you choose, and the project files they import, are sent. Secret and ignored files are skipped. `/counterfact` offers to do this for you the first time.
 
    If you use Claude Code's sandbox, allow relay.counterfactlabs.com and app.counterfactlabs.com when Claude Code asks, or add both to the sandbox's allowed domains.
 
@@ -25,7 +25,7 @@ When you ask for an analysis, Claude runs it and charges your balance. If your b
 
 The plugin starts `npx -y @counterfact-labs/cli@0.2.9 mcp` on your computer (an exact version, updated when the plugin adopts a new CLI release) and allows up to 15 minutes per tool call. Cancelling the tool call or reaching that limit stops the analysis. If an analysis is stopped before it finishes, run it again. Results appear on the project's findings page at the link Claude shows. The plugin version also advances for skill changes without changing the CLI pin, so `claude plugin update counterfact@counterfact-labs` picks up those releases.
 
-The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to your console.
+The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to the Counterfact web console.
 
 Counterfact keeps the findings from each analysis until it or the workspace is deleted. See the [command-line package](https://www.npmjs.com/package/@counterfact-labs/cli) for commands and privacy details, and the [Counterfact website](https://counterfactlabs.com) for Codex setup.
 
