@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cliPin } from './plugin-release.mjs';
 
 // The optional root lets tests point the script at a fixture directory.
 const root = process.argv[2] ?? fileURLToPath(new URL('../', import.meta.url));
@@ -18,21 +19,14 @@ const read = (path, parseJson = false) => {
 };
 
 const plugin = read('.claude-plugin/plugin.json', true);
-const mcp = read('.mcp.json', true);
-const readme = read('README.md');
-
-const prefix = '@counterfact-labs/cli@';
-const args = mcp?.mcpServers?.counterfact?.args;
-const pin = Array.isArray(args)
-  ? args.find((arg) => typeof arg === 'string' && arg.startsWith(prefix))
-  : undefined;
-if (!pin) fail('The Counterfact CLI argument is missing from .mcp.json.');
-
-const version = pin.slice(prefix.length);
-// The plugin ships stable releases only, so exact prerelease pins are rejected too.
-if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
-  fail(`The Counterfact CLI pin ${version} must be an exact X.Y.Z version.`);
+let release;
+try {
+  release = cliPin(root);
+} catch (error) {
+  fail(error.message);
 }
+const { mcp, pin, version } = release;
+const readme = read('README.md');
 
 function* strings(value) {
   if (typeof value === 'string') yield value;
@@ -60,7 +54,7 @@ for (const mention of readme.matchAll(/@counterfact-labs\/cli@([^\s`'"]*?)(?=[.,
   }
 }
 // A missing startup pin would hide drift even when every remaining mention agrees.
-if (!readme.includes('`npx -y ' + prefix + version + ' mcp`')) {
-  fail(`README.md must include a pinned npx ${prefix}${version} mcp command.`);
+if (!readme.includes('`npx -y ' + pin + ' mcp`')) {
+  fail(`README.md must include a pinned npx ${pin} mcp command.`);
 }
 console.log(`Plugin, CLI pin, and README versions agree at ${version}.`);
