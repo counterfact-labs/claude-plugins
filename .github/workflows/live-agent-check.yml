@@ -1,3 +1,25 @@
+# Live agent release check (internal operations notes; kept out of the public README).
+#
+# When it runs: on a published plugin release, by manual dispatch, Mondays at 06:23 UTC, and at
+# minute 17 of every hour, when the latest @counterfact-labs/cli version on npm differs from the
+# last attempted analysis. The attempted version is cached even if the analysis fails, so hourly
+# polls do not retry a failing version; weekly, manual, and release runs do retry. Release runs
+# cache on their tag ref, which scheduled runs cannot read, so the next hourly poll may repeat.
+#
+# What it does: installs pinned Claude Code and Codex, installs the published plugin and CLI,
+# and has each agent analyze the fictional agent in scripts/fixtures/live-agent with
+# --max-dollars 5 (Counterfact estimates only; provider charges are separate) and a 900-second
+# deadline per command. Only the paid job joins the concurrency group. Both agents must produce
+# MCP completion evidence, a CLI summary, a matching console upload receipt, and a findings URL.
+#
+# Secrets (Actions secrets in this repo): ANTHROPIC_API_KEY, OPENAI_API_KEY, and
+# COUNTERFACT_LIVE_TEST_KEY (the smoke@ test account's CLI key). Missing secrets produce a
+# warning that names them; values are never printed.
+#
+# Local use: scripts/live-agent-check.sh check previews commands without network calls;
+# scripts/live-agent-check.sh run --confirm-paid --max-dollars 5 runs it. Offline tests:
+# node --test --test-concurrency=4 scripts/*.test.mjs (the workflow test needs PyYAML).
+
 name: Live agent release analysis
 
 on:

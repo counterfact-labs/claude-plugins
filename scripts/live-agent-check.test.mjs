@@ -172,7 +172,7 @@ test('check without an agent directory preserves the existing local default',asy
   const r=await run(t,['check'],'ok','',false,null);
   assert.equal(r.status,0,r.stderr);
   assert.deepEqual(r.calls,[]);
-  assert.match(r.stdout,/Copy \/home\/user\/code\/counterfact-local\/example-agents\/bramblewood-support separately/);
+  assert.match(r.stdout,/Copy \S*scripts\/fixtures\/live-agent separately/);
 });
 
 test('custom agent directory is previewed and copied independently for both providers',async t=>{

@@ -5,7 +5,7 @@ import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { consoleOrigin, startBridge } from './live-agent-bridge.mjs';
 
-const example = '/home/user/code/counterfact-local/example-agents/bramblewood-support';
+const example = fileURLToPath(new URL('./fixtures/live-agent', import.meta.url));
 const adapter = fileURLToPath(new URL('./live-agent-mcp.mjs', import.meta.url));
 const usage = 'Usage: scripts/live-agent-check.sh <check|run> [--confirm-paid] [--max-dollars 5] [--timeout-seconds 1200] [--agent-dir path]';
 const quote = text => /^[a-zA-Z0-9_@%+=:,./#-]+$/.test(text) ? text : "'" + text.replaceAll("'", "'\\''") + "'";
