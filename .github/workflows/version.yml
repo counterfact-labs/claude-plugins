@@ -12,11 +12,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Test version check
-        run: node --test scripts/check-version.test.mjs
+      - name: Test plugin release checks
+        run: node --test scripts/check-version.test.mjs scripts/smoke-mcp.test.mjs scripts/check-plugin-bump.test.mjs
       # Catch stale plugin metadata before a CLI pin change can ship.
       - name: Check plugin version
         run: node scripts/check-version.mjs
+      - name: Require a version bump for plugin content changes
+        env:
+          PLUGIN_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/check-plugin-bump.mjs
+      - name: Smoke test pinned npm CLI
+        timeout-minutes: 3
+        run: node scripts/smoke-mcp.mjs
