@@ -22,11 +22,11 @@ test('finding 13 records Arya withdrawing plugin charge wording in favor of the 
   assert.doesNotMatch(finding, /pending|Recommended|Alternative/);
 });
 
-test('README preserves the approved plugin release wording and Codex setup link from #15', () => {
+test('README preserves the approved plugin release wording from #15 and links to the Codex setup page', () => {
   const text = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   assert.match(text, /\(an exact version, updated when the plugin adopts a new CLI release\)/);
   assert.match(text, /The plugin version also advances for skill changes without changing the CLI pin, so `claude plugin update counterfact@counterfact-labs` picks up those releases\./);
-  assert.match(text, /for commands and privacy details, and the \[Counterfact website\]\(https:\/\/counterfactlabs\.com\) for Codex setup\./);
+  assert.match(text, /See the \[command-line package\]\(https:\/\/www\.npmjs\.com\/package\/@counterfact-labs\/cli\) for commands and privacy details, and the \[Counterfact setup page\]\(https:\/\/counterfactlabs\.com\/setup\) for Codex setup\./);
 });
 
 test('the consent decisions do not duplicate the plugin release approval from #15', () => {
