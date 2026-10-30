@@ -1,4 +1,6 @@
-// Published CLI refusal contracts; never accept a generic tool error.
+// PR #250's file-specific wording and legacy published CLI refusal contracts.
+// Never accept a generic tool error as evidence of credential filtering.
+export const credentialSkippedPromptMessage = path => `Counterfact skipped ${path} because it appears to contain a credential, so no agent prompt was left to analyze. Remove the credential and try again.`;
 export const credentialRefusalMessage = "Counterfact couldn't find an agent prompt in this folder. Pass a folder containing an agent prompt or a model call with a system prompt.";
 export const credentialProposalRefusalMessage = "The proposed agent files couldn't be used, because a path is outside the folder or isn't a file Counterfact can read.";
 
@@ -19,12 +21,13 @@ function cites(finding, path, line) {
     return site.path?.replace(/^\.\//, '') === path && Number.isSafeInteger(start) && Number.isSafeInteger(end) && start > 0 && start <= line && end >= line && end >= start;
   });
 }
-export function assertCase(id, { findings = [], coverageSupported = false, coverage, text = '', credentialRefused = false }) {
+export function assertCase(id, { findings = [], coverageSupported = false, coverage, text = '', credentialRefused = false, credentialMessageAvailable = false }) {
   const spec = cases.find(c => c.id === id);
   if (!spec) throw Error(`Unknown case: ${id}`);
   if (spec.expect === 'refused') {
     if (!credentialRefused) throw Error(`${id}: expected refusal before reservation`);
-    return { reason: 'Credential-containing prompt refused before reservation; charged $0.00' };
+    return { reason: 'Credential-containing prompt refused before reservation; charged $0.00' +
+      (credentialMessageAvailable ? '' : '; credential message not yet available') };
   }
   const missing = spec.sources.filter(([path, line]) => !findings.some(f => cites(f, path, line)));
   if (missing.length) throw Error(`${id}: no finding cited ${missing.map(([path, line]) => `${path}:${line}`).join(', ')}`);

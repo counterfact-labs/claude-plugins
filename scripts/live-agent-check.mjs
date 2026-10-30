@@ -5,17 +5,18 @@ import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { consoleOrigin, startBridge, analysisCeilingMicro } from './live-agent-bridge.mjs';
 import { cliPin } from './plugin-release.mjs';
-import { cases, assertCase, credentialRefusalMessage, credentialProposalRefusalMessage } from './live-agent-cases.mjs';
+import { cases, assertCase, credentialSkippedPromptMessage, credentialRefusalMessage, credentialProposalRefusalMessage } from './live-agent-cases.mjs';
 import { capture, probeMcp, overCapProbe, checkLinks } from './live-agent-probes.mjs';
 
 const example = fileURLToPath(new URL('./fixtures/live-agent', import.meta.url));
 const adapter = fileURLToPath(new URL('./live-agent-mcp.mjs', import.meta.url));
-const usage = 'Usage: scripts/live-agent-check.sh <check|run> [--confirm-paid] [--max-dollars 20] [--timeout-seconds 1200] [--agent-dir path]';
+const runCeilingDollars = 15;
+const usage = `Usage: scripts/live-agent-check.sh <check|run> [--confirm-paid] [--max-dollars ${runCeilingDollars}] [--timeout-seconds 1200] [--agent-dir path]`;
 const quote = text => /^[a-zA-Z0-9_@%+=:,./#-]+$/.test(text) ? text : "'" + text.replaceAll("'", "'\\''") + "'";
 function options(args) {
   const mode = args.shift();
   if (!['check', 'run'].includes(mode)) throw Error(usage);
-  let max = '20', seconds = '1200', confirmed = false, agentDir = example;
+  let max = String(runCeilingDollars), seconds = '1200', confirmed = false, agentDir = example;
   const seen = new Set();
   while (args.length) {
     const flag = args.shift();
@@ -29,9 +30,9 @@ function options(args) {
       if (!agentDir?.trim() || agentDir.startsWith('--')) throw Error('Invalid --agent-dir; use a directory path');
     } else throw Error(usage);
   }
-  if (!/^\d+(?:\.\d{1,6})?$/.test(max) || Number(max) <= 0 || Number(max) > 20 ||
+  if (!/^\d+(?:\.\d{1,6})?$/.test(max) || Number(max) <= 0 || Number(max) > runCeilingDollars ||
       !Number.isSafeInteger(Math.round(Number(max) * 1e6))) {
-    throw Error('Invalid --max-dollars; use a positive dollar amount at most 20 with at most six decimals');
+    throw Error(`Invalid --max-dollars; use a positive dollar amount at most ${runCeilingDollars} with at most six decimals`);
   }
   if (!/^\d+$/.test(seconds) || !Number.isSafeInteger(Number(seconds)) ||
       Number(seconds) < 1 || Number(seconds) > 3600) {
@@ -58,7 +59,7 @@ function commands(backend) {
 }
 function preview(config) {
   console.log('Live agent release analysis preview. No network calls or executables.');
-  console.log(`Total Counterfact analysis estimate cap: $${(config.cap / 1e6).toFixed(2)}. Per-analysis ceiling $${(analysisCeilingMicro / 1e6).toFixed(2)}; up to eight analyses. run requires --confirm-paid and COUNTERFACT_LIVE_TEST_KEY.`);
+  console.log(`Total Counterfact analysis estimate cap: $${(config.cap / 1e6).toFixed(2)}. Per-analysis ceiling $${(analysisCeilingMicro / 1e6).toFixed(2)}; up to six analyses. run requires --confirm-paid and COUNTERFACT_LIVE_TEST_KEY.`);
   console.log(`Copy ${config.agentDir} separately for Claude and Codex under a private temporary directory (clean case; the other cases use their dedicated fixtures).`);
   console.log('Each gets fresh HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, XDG directories, and npm cache; use provider credentials from environment only.');
   console.log('Install an npx stdio adapter ahead of PATH. It launches the published MCP server, captures actual protocol replies, and permits one analysis per agent per case.');
@@ -155,8 +156,8 @@ function validateEvidence(state, caseId) {
       /Not signed in\.|Your saved sign-in can't be read\./.test(text)) {
     throw Error('In-memory CLI sign-in failed; verify the test key and published CLI adapter compatibility');
   }
-  // Filtering the only prompt yields a proposal error or a no-agent choice,
-  // depending on the actual input. Neither path may attempt a reservation.
+  // New CLIs explain the filtered prompt in a no-agent choice for either input.
+  // Legacy proposal errors stay request-aware; neither path may reserve.
   const spec = cases.find(spec => spec.id === caseId);
   const proposed = state.proposal !== undefined;
   const proposedFiles = state.proposal?.files;
@@ -165,12 +166,13 @@ function validateEvidence(state, caseId) {
     spec.files.every(path => proposedFiles.some(file => file?.role === 'prompt' && typeof file.path === 'string' &&
       file.path.replace(/^(?:\.\/)+/, '') === path));
   const refusal = proposed ? credentialProposalRefusalMessage : credentialRefusalMessage;
-  const expectedChoice = proposed ? expectedProposal && structured?.kind === undefined
-    : structured?.kind === 'no_agent' && Array.isArray(structured.candidates) && !structured.candidates.length;
+  const noAgentChoice = structured?.kind === 'no_agent' && Array.isArray(structured.candidates) && !structured.candidates.length;
+  const credentialMessageAvailable = spec?.expect === 'refused' && text.trim() === credentialSkippedPromptMessage(spec.files[0]);
+  const expectedChoice = credentialMessageAvailable ? noAgentChoice : proposed ? structured?.kind === undefined : noAgentChoice;
   if (spec?.expect === 'refused' && result?.isError === true && structured?.exitCode === 1 &&
-      expectedChoice && text.trim() === refusal && state.reservationRequests === 0 &&
+      (!proposed || expectedProposal) && expectedChoice && (credentialMessageAvailable || text.trim() === refusal) && state.reservationRequests === 0 &&
       !state.reservations.size && !state.receipts.length && !state.findings.length) {
-    return { credentialRefused: true };
+    return { credentialRefused: true, credentialMessageAvailable };
   }
   if (result?.isError || structured?.exitCode !== 0) throw Error('MCP analysis did not complete successfully');
   const receipt = state.receipts[0];
@@ -322,6 +324,7 @@ async function main() {
           const text = result.content.filter(item => item.type === 'text').map(item => item.text).join('\n');
           row = { pass: true, ...receipt };
           row = { ...row, ...assertCase(spec.id, { findings: bridge.state.findings, credentialRefused: receipt.credentialRefused,
+            credentialMessageAvailable: receipt.credentialMessageAvailable,
             coverageSupported: bridge.state.coverageSupported || Object.hasOwn(result.structuredContent, 'coverage'), coverage: result.structuredContent.coverage, text }) };
         } catch (error) { row = { ...row, pass: false, reason: error.message.startsWith(spec.id + ':') ? error.message : `${spec.id}: ${error.message}` }; }
         finally {

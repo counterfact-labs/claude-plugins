@@ -45,7 +45,7 @@ Verified receipt amounts and saved findings URLs now survive later MCP, agent or
 case-assertion failures in stdout and the job summary. If agent validation never
 reported provider cost, the row says `provider not reported`.
 
-## Product finding and coverage decision for Arya
+## Product finding and settled coverage decision
 
 Credential filtering is correct, but its explanation is misleading. When a valid
 prompt is excluded for containing a credential, discovery says:
@@ -58,15 +58,32 @@ Claude's proposal path says:
 
 Neither tells the user that credential content caused the skip; the proposal
 message suggests a path or file problem. This is a product finding demonstrated
-offline. Product wording is outside this harness repair and was not changed.
+offline. The original harness repair did not change product wording.
 
 The Oct 29 decision required every run to flag the planted line. This credential
 fixture cannot produce a finding through today's CLI because its file is filtered
 before analysis. It now guards filtering only; it no longer covers credential
-finding detection. **Arya's decision: should a different fixture restore
-credential-detection finding coverage in a follow-up, or should this case remain
-filtering-only?** The question was raised during this fix. No fixture or product
-filter was changed. Authority and both tool-source citation checks remain active.
+finding detection. **Arya decided on Oct 30, approximately 11:32 AM Pacific:
+keep this as a free refusal case, with no analysis, charge or reservation.**
+The suite keeps three paid cases per coding agent: six analyses, about $12 per
+run, with a $15 aggregate cap and the existing $5 per-analysis ceiling.
+No fixture or product filter was changed. Authority and both tool-source citation
+checks remain active.
+
+Counterfact-local PR #250 supplies the approved file-specific message:
+
+> Counterfact skipped prompt.md because it appears to contain a credential, so no agent prompt was left to analyze. Remove the credential and try again.
+
+The CLI inserts the actual skipped path. The unchanged suite fixture is named
+`system_prompt.md`, so the harness requires that name in the approved wording.
+Both proposal and discovery requests use the new empty `no_agent` choice. The
+older proposal and discovery messages above remain accepted only for their
+matching request shapes, and report `credential message not yet available` in
+stdout and the job summary. All accepted refusals still require zero reservation
+attempts, held reservations, upload receipts and findings. A valid message with
+an invalid proposal, another filename, a nonempty choice or a reservation attempt
+fails. Availability is established from the actual MCP result, never a version
+number or the coding agent's paraphrase.
 
 ## Published CLI evidence
 
@@ -180,3 +197,75 @@ FAIL Claude | clean | clean: MCP analysis did not complete successfully; estimat
 The full existing estimate/charged/provider/duration fields and saved URLs can now
 appear on failed rows, too. Product refusal messages are validation constants;
 product wording is unchanged. This report is also new visible text awaiting approval.
+
+## Oct 30 decision follow-up
+
+The follow-up changes `scripts/live-agent-cases.mjs` (approved refusal expectation
+and legacy status), `scripts/live-agent-check.mjs` (message validation, availability
+propagation and cap), `scripts/live-agent-check.test.mjs` (scripted regressions),
+`scripts/live-agent-workflow.test.mjs` (workflow cap assertion),
+`.github/workflows/live-agent-check.yml` (cap argument and figures), and this report.
+The earlier receipt, installed-prefix and npm-page fixes remain in place.
+
+The task authorizes this follow-up's wording and figures. The initial operator
+text above remains a historical record; the current changed terminal text is,
+verbatim (default cap shown):
+
+```text
+Usage: scripts/live-agent-check.sh <check|run> [--confirm-paid] [--max-dollars 15] [--timeout-seconds 1200] [--agent-dir path]
+Invalid --max-dollars; use a positive dollar amount at most 15 with at most six decimals
+Total Counterfact analysis estimate cap: $15.00. Per-analysis ceiling $5.00; up to six analyses. run requires --confirm-paid and COUNTERFACT_LIVE_TEST_KEY.
+Live agent integration suite | total Counterfact cap $15.00 | per analysis $5.00
+Credential-containing prompt refused before reservation; charged $0.00; credential message not yet available
+```
+
+The last line is the reason in both agents' legacy-refusal PASS rows and job-summary
+cells. A validated new message retains the existing reason without that suffix:
+`Credential-containing prompt refused before reservation; charged $0.00`.
+The newly recognized CLI text for the unchanged fixture is exactly:
+
+```text
+Counterfact skipped system_prompt.md because it appears to contain a credential, so no agent prompt was left to analyze. Remove the credential and try again.
+```
+
+This is a product-owned message assertion, not a replacement message emitted by
+the harness. Its filename substitution follows PR #250's formatter. The task's
+approved `prompt.md` example is quoted in the settled-decision section above.
+
+Changed workflow comments and invocation, verbatim:
+
+```text
+# Three paid cases and one free credential refusal in BOTH Claude Code and Codex:
+# six paid analyses, about $12 per run (about $2 each today).
+# Counterfact cap: $15 per run, $5 per analysis, checked against integer priceMicro
+# (about $12). GitHub keeps only one pending job per group: a changed hourly poll
+scripts/live-agent-check.sh run --confirm-paid --max-dollars 15 --timeout-seconds 900
+```
+
+No workflow or paid run was triggered. No network, dependency installation,
+product source change, fixture change, secret access or Git metadata write was
+needed. Tests ran with an isolated HOME and only fictional credentials. The
+machine's existing PyYAML installation was exposed through PYTHONPATH; no
+package was installed. The earlier evidence files remain unchanged.
+
+Follow-up evidence is under `/home/user/tmp/live-suite-run1/credential-decision/`:
+
+- `red.txt`: 15 selected tests, 8 expected failures and 7 passing guards (exit 1),
+  before implementation. The failures cover new-message acceptance, legacy status,
+  cap default/boundary/aggregate enforcement, and the workflow argument.
+- `green.txt`: the same 15 selected tests passed, 0 failures, 0 skips (exit 0).
+- `full-offline.txt`: `node --test --test-concurrency=4`, **238/238 passed**,
+  0 failures, 0 skips (exit 0), including all affected test files.
+- `syntax-and-diff.txt`: all four changed JavaScript files passed `node --check`;
+  `git diff --check` passed.
+- `visible-text.txt`: real offline preview, usage and cap-error output, with
+  expected exit statuses. No live run was invoked.
+- `contract-and-plan.md`, `search-inventory.txt`: scope and owner/caller inventory.
+- `red-initial-environment.txt`: the first red attempt, preserved separately
+  because its workflow test could not import PyYAML under the isolated HOME.
+  The corrected red, green and full runs used the existing package through
+  PYTHONPATH and did not install dependencies.
+
+A read-only code review found no material issues. This dependency-free plugin
+repository has no package.json, lint script or TypeScript project; the requested
+Node suite and JavaScript syntax checks are the applicable verification gates.

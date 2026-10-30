@@ -26,6 +26,7 @@ const mode = process.env.FAKE_MODE;
 const uploadFinding = ${uploadFinding.toString()};
 const noAgentMessage = ${JSON.stringify(credentialRefusalMessage)};
 const proposalMessage = ${JSON.stringify(credentialProposalRefusalMessage)};
+const skippedPromptMessage = 'Counterfact skipped system_prompt.md because it appears to contain a credential, so no agent prompt was left to analyze. Remove the credential and try again.';
 const log = value => fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(value) + '\\n');
 log({name, args, home: process.env.HOME, cwd: process.cwd(), keyPresent: !!process.env.COUNTERFACT_LIVE_TEST_KEY,
   prompt: fs.existsSync('system_prompt.md') ? fs.readFileSync('system_prompt.md', 'utf8') : null,
@@ -85,14 +86,16 @@ if (name === 'npx') {
         if(mode==='miss-description')findings=findings.filter(f=>f.site.path!=='tools.json');
         if(mode==='miss-code')findings=findings.filter(f=>f.site.path!=='tools.js');
         if (mode!=='credential-admitted' && prompt.includes('Support integration token:') || mode==='no-agent-clean') {
-          if(mode==='credential-paid-refusal') {
+          if(mode==='credential-paid-refusal'||mode==='credential-new-paid-refusal') {
             const created=await call('/api/cli/relay-reservations',{action:'create'});
             await call('/api/cli/relay-reservations',{action:'reserve',reservationId:created.reservationId});
+            if(mode==='credential-new-paid-refusal')await call('/api/cli/relay-reservations',{action:'fail',reservationId:created.reservationId});
           }
           const proposed=q.params.arguments.proposal!==undefined;
-          const proposalRefusal=mode==='credential-proposal-without-proposal'||proposed&&mode!=='credential-no-agent-with-proposal';
-          const text=mode==='credential-wrong-refusal'?'Analysis could not finish':proposalRefusal?proposalMessage:noAgentMessage;
-          send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:[{type:'text',text}],structuredContent:{text,exitCode:1,...(proposalRefusal?{}:{kind:'no_agent',candidates:[]}),reason:'request_failed'}}});
+          const modern=mode.startsWith('credential-new');
+          const proposalRefusal=!modern&&(mode==='credential-proposal-without-proposal'||proposed&&mode!=='credential-no-agent-with-proposal');
+          const text=modern?(mode==='credential-new-wrong-file'?skippedPromptMessage.replace('system_prompt.md','other.md'):skippedPromptMessage):mode==='credential-wrong-refusal'?'Analysis could not finish':proposalRefusal?proposalMessage:noAgentMessage;
+          send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:[{type:'text',text}],structuredContent:{text,exitCode:1,...(proposalRefusal?{}:{kind:mode==='credential-new-wrong-kind'?'choose_agent':'no_agent',candidates:mode==='credential-new-candidates'?[{folder:'.',reason:'system_prompt.md'}]:[]}),...(modern?{skippedPrompts:['system_prompt.md']}:{}),reason:'request_failed'}}});
           return;
         }
         if (mode === 'bridge-fails') await call('/api/cli/unexpected',{});
@@ -141,7 +144,7 @@ if (name === 'npx') {
   createInterface({input:child.stdout}).on('line',line=>{
     const r=JSON.parse(line);
     if (r.id===1) {write({method:'notifications/initialized'});write({id:4,method:'tools/list'});}
-    else if(r.id===4) {write({id:2,method:'tools/call',params:{name:mode.startsWith('disallowed-')?mode.slice('disallowed-'.length):'analyze_agent',arguments:{path:process.cwd(),...(name==='claude'?{proposal:{agentName:'Paper shop assistant',files:[{path:mode==='credential-invalid-proposal'?'../outside.md':mode==='credential-unrelated-proposal'?'other.md':mode==='credential-relative-proposal'?'./system_prompt.md':'system_prompt.md',role:'prompt'}]}}:{})}}});}
+    else if(r.id===4) {write({id:2,method:'tools/call',params:{name:mode.startsWith('disallowed-')?mode.slice('disallowed-'.length):'analyze_agent',arguments:{path:process.cwd(),...(name==='claude'?{proposal:{agentName:'Paper shop assistant',files:[{path:['credential-invalid-proposal','credential-new-invalid-proposal'].includes(mode)?'../outside.md':mode==='credential-unrelated-proposal'?'other.md':mode==='credential-relative-proposal'?'./system_prompt.md':'system_prompt.md',role:'prompt'}]}}:{})}}});}
     else if (r.id===2) {
       if (mode==='bridge-fails'&&!fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')) {setInterval(()=>{},1000);return;}
       if (mode==='duplicate') {write({id:3,method:'tools/call',params:{name:'analyze_agent',arguments:{path:process.cwd()}}});return;}
@@ -239,6 +242,7 @@ test('check without an agent directory preserves the existing local default',asy
   assert.equal(r.status,0,r.stderr);
   assert.deepEqual(r.calls,[]);
   assert.match(r.stdout,/Copy \S*scripts\/fixtures\/live-agent separately/);
+  assert.match(r.stdout,/Total Counterfact analysis estimate cap: \$15\.00\. Per-analysis ceiling \$5\.00; up to six analyses\./);
 });
 
 test('custom agent directory is previewed and copied independently for both providers',async t=>{
@@ -325,10 +329,10 @@ test('null price with a valid provider budget fails as an unpriced test account 
   assert.doesNotMatch(r.stdout+r.stderr,/fictional-live-key|fictional-capability/);
 });
 
-test('six Personal prices fit the shared twenty dollar cap regardless of provider budgets',async t=>{
+test('six Personal prices fit the shared fifteen dollar cap regardless of provider budgets',async t=>{
   const r=await run(t,undefined,'priced-personal');
   assert.equal(r.status,0,r.stdout+r.stderr);
-  assert.match(r.stdout,/total Counterfact cap \$20\.00/);
+  assert.match(r.stdout,/total Counterfact cap \$15\.00/);
   assert.equal(r.stdout.match(/estimate \$1\.99; charged \(equals estimate\) \$1\.99/g)?.length,6);
   assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
   assert.doesNotMatch(r.stdout,/workspace allowance|provider budget/);
@@ -345,7 +349,7 @@ for(const mode of ['over-cap','unknown-price','total-cap'])test('withholds model
   const r=await run(t,undefined,mode);assert.notEqual(r.status,0,r.stdout);assert.match(r.stdout,/FAIL/);
   assert.match(r.stdout,mode==='unknown-price'?/Analysis reservation priceMicro is unavailable; the test account is not on a priced plan/
     :mode==='over-cap'?/Per-analysis priceMicro exceeds the \$5 cap/:/Total analysis priceMicro exceeds the cap/);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode.endsWith('total-cap')?5:0);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode.endsWith('total-cap')?3:0);
   assert.ok(r.calls.some(c=>c.name==='console'&&c.action==='fail'));
 });
 
@@ -478,9 +482,9 @@ test('bounds headless runs and removes isolated directories after timeout',async
   for(const c of r.calls.filter(c=>c.home))assert.equal(existsSync(c.home),false);
 });
 
-test('each analysis also obeys the five dollar ceiling when the run still has twenty dollars',async t=>{
+test('each analysis also obeys the five dollar ceiling when the run still has fifteen dollars',async t=>{
   const original=globalThis.fetch;
-  const budget={used:0,cap:20000000};
+  const budget={used:0,cap:15000000};
   const bridge=await startBridge({key:'fictional-live-key',budget,folder:resolve(fixtureDir)});
   t.after(()=>bridge.close());
   let released=false;
@@ -554,9 +558,13 @@ test('sign-in free probe fails a signed-out integration without attempting sign 
   assert.match(r.stdout,/FAIL Claude \| sign-in/);
   assert.match(r.stdout,/FAIL Codex \| sign-in/);
 });
-test('the local run cap cannot exceed twenty dollars',async t=>{
-  const r=await run(t,['check','--max-dollars','20.000001']);
-  assert.equal(r.status,1);assert.match(r.stderr,/20/);assert.deepEqual(r.calls,[]);
+test('the local run cap cannot exceed fifteen dollars',async t=>{
+  const r=await run(t,['check','--max-dollars','15.000001']);
+  assert.equal(r.status,1);assert.match(r.stderr,/15/);assert.deepEqual(r.calls,[]);
+});
+test('the local run cap accepts exactly fifteen dollars without launching tools',async t=>{
+  const r=await run(t,['check','--max-dollars','15']);
+  assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/estimate cap: \$15\.00/);assert.deepEqual(r.calls,[]);
 });
 test('an upload receipt cannot turn rejected planted findings into passing evidence',async t=>{
   const r=await run(t,undefined,'dropped-findings');
@@ -697,8 +705,25 @@ test('credential proposal and discovery refusals before reservation pass in both
   const r=await run(t,undefined,'credential-refusal');
   assert.equal(r.status,0,r.stdout+r.stderr);
   for(const backend of ['Claude','Codex'])assert.match(r.stdout,new RegExp('PASS '+backend+' \\| planted-credential \\| Credential-containing prompt refused before reservation; charged \\$0.00'));
+  const summary=readFileSync(join(r.root,'summary.md'),'utf8');
+  for(const output of [r.stdout,summary])assert.equal(output.match(/credential message not yet available/g)?.length,2,output);
   assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
   assert.equal(r.calls.filter(c=>c.name==='console'&&c.action==='reserve').length,6);
+});
+test('credential new message names the skipped prompt for both proposal and discovery without reserving',async t=>{
+  const r=await run(t,undefined,'credential-new-message');
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  for(const backend of ['Claude','Codex'])assert.match(r.stdout,new RegExp('PASS '+backend+' \\| planted-credential \\| Credential-containing prompt refused before reservation; charged \\$0.00'));
+  for(const output of [r.stdout,readFileSync(join(r.root,'summary.md'),'utf8')])assert.doesNotMatch(output,/credential message not yet available/);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
+  assert.equal(r.calls.filter(c=>c.name==='console'&&c.action==='reserve').length,6);
+  assert.equal(r.calls.filter(c=>c.name==='console'&&c.path==='/api/cli/checks/local').length,6);
+});
+for(const mode of ['credential-new-wrong-file','credential-new-wrong-kind','credential-new-candidates','credential-new-paid-refusal','credential-new-invalid-proposal'])test('credential new message rejects '+mode,async t=>{
+  const r=await run(t,undefined,mode);
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  assert.match(r.stdout,/FAIL Claude \| planted-credential/);
+  assert.match(r.stdout,new RegExp((mode==='credential-new-invalid-proposal'?'PASS':'FAIL')+' Codex \\| planted-credential'));
 });
 test('credential refusal passes with a paraphrased final agent response',async t=>{
   const r=await run(t,undefined,'credential-paraphrase');
