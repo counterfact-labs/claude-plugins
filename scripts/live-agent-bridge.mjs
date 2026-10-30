@@ -90,15 +90,20 @@ export async function startBridge({ key, budget, folder }) {
       const result = await upstream(path, request.method, text, headers);
       if (path === '/api/cli/relay-reservations' && body.action === 'reserve' && result.status < 300) {
         const { priceMicro, reservationId } = result.value;
-        // Reserve places a hold. Withhold its relay capability until the price
-        // passes; releasing a refusal happens before the CLI can call a model.
-        const valid = result.value.state === 'reserved' && result.value.settlement === 'held' &&
-          typeof reservationId === 'string' && reservationId === body.reservationId && Number.isSafeInteger(priceMicro) && priceMicro >= 0;
-        if (!valid || budget.used + priceMicro > budget.cap) {
+        // The test account must use the priced path. Withhold its relay
+        // capability until the customer price fits the shared run cap.
+        const invalidField = result.value.state !== 'reserved' ? 'state'
+          : result.value.settlement !== 'held' ? 'settlement'
+          : typeof reservationId !== 'string' || reservationId !== body.reservationId ? 'reservationId'
+          : !Number.isSafeInteger(priceMicro) || priceMicro < 0 ? 'priceMicro'
+          : undefined;
+        if (invalidField || budget.used + priceMicro > budget.cap) {
           // Recording a failure stops the agent and starts bridge cleanup.
           // Finish releasing its hold before that cleanup can write the report.
           await release(body.reservationId);
-          fail(!valid ? 'Analysis estimate/price is missing or invalid' : 'Total analysis estimate exceeds the cap');
+          fail(invalidField === 'priceMicro' && priceMicro === null
+            ? 'Analysis reservation priceMicro is unavailable; the test account is not on a priced plan'
+            : invalidField ? `Analysis reservation ${invalidField} is missing or invalid` : 'Total analysis priceMicro exceeds the cap');
           reply(403, { code: 'not_allowed', error: state.failures[0] }); return;
         }
         budget.used += priceMicro;

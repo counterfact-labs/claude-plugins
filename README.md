@@ -25,8 +25,25 @@ When you ask for an analysis, Claude runs it and charges your balance. If your b
 
 The plugin starts `npx -y --prefix="${CLAUDE_PLUGIN_ROOT}" @counterfact-labs/cli@0.2.9 mcp` on your computer (an exact version, updated when the plugin adopts a new CLI release) and allows up to 15 minutes per tool call. Cancelling the tool call or reaching that limit stops the analysis. If an analysis is stopped before it finishes, run it again. Results appear on the project's findings page at the link Claude shows. The plugin version also advances for skill changes without changing the CLI pin, so `claude plugin update counterfact@counterfact-labs` picks up those releases.
 
+## Codex
+
+Sign in to Counterfact with `npx -y @counterfact-labs/cli login` before first use.
+Add these lines to `~/.codex/config.toml` to connect the Counterfact MCP server.
+
+```toml
+[mcp_servers.counterfact]
+command = "npx"
+args = ["-y", "@counterfact-labs/cli@0.2.9", "mcp"]
+startup_timeout_sec = 120
+tool_timeout_sec = 900
+default_tools_approval_mode = "approve"
+```
+
+`default_tools_approval_mode = "approve"` lets Codex call Counterfact's tools, including the paid `analyze_agent`, without asking each time.
+Then ask Codex to analyze your agent.
+
 The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to the Counterfact web console.
 
-Counterfact keeps the findings from each analysis until it or the workspace is deleted. See the [command-line package](https://www.npmjs.com/package/@counterfact-labs/cli) for commands and privacy details, and the [Counterfact website](https://counterfactlabs.com) for Codex setup.
+Counterfact keeps the findings from each analysis until it or the workspace is deleted. See the [command-line package](https://www.npmjs.com/package/@counterfact-labs/cli) for commands and privacy details, and the [Counterfact setup page](https://counterfactlabs.com/setup) for Codex setup.
 
 The file layout follows the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference) and [marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces). Claude Code namespaces the command as `/counterfact:counterfact`.

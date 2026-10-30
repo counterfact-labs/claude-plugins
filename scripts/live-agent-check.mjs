@@ -59,9 +59,9 @@ function preview(config) {
   console.log(`Copy ${config.agentDir} separately for Claude and Codex under a private temporary directory.`);
   console.log('Each gets fresh HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, XDG directories, and npm cache; use provider credentials from environment only.');
   console.log('Install an npx stdio adapter ahead of PATH. It launches the published MCP server, captures actual protocol replies, and permits one analysis per agent.');
-  console.log('Codex config: npx -y @counterfact-labs/cli@latest mcp; startup_timeout_sec=120; tool_timeout_sec=900; approval_policy=never.');
+  console.log('Codex config: npx -y @counterfact-labs/cli@latest mcp; startup_timeout_sec=120; tool_timeout_sec=900; approval_policy=never; default_tools_approval_mode=approve.');
   console.log('The CLI credential read is served in memory. A loopback transport adds the test key only to production console HTTPS requests.');
-  console.log('Withhold each reservation capability until its priceMicro is known and the combined estimate fits the cap; otherwise release the hold before model work.');
+  console.log('Withhold each reservation capability until its priceMicro is a nonnegative safe integer and the combined price fits the cap; otherwise release the hold before model work.');
   console.log('A temporary balance hold may occur before the price is available. Coding-agent provider costs are separate and are not bounded by this Counterfact cap.');
   for (const backend of ['claude', 'codex']) {
     console.log(`\n${backend}: cwd=<temporary>/${backend}/agent; HOME=<temporary>/${backend}/home`);
@@ -129,6 +129,7 @@ function configure(home, bin) {
     'approval_policy = "never"',
     'sandbox_mode = "read-only"',
     '[mcp_servers.counterfact]',
+    'default_tools_approval_mode = "approve"',
     `command = ${JSON.stringify(join(bin, 'npx'))}`,
     'args = ["-y", "@counterfact-labs/cli@latest", "mcp"]',
     'startup_timeout_sec = 120',
