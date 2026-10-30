@@ -1,6 +1,7 @@
 # Live agent integration suite (internal operations; no public README changes).
-# Four cases in BOTH Claude Code and Codex: eight paid analyses, about $2 each today.
-# Counterfact cap: $20 per run, $5 per analysis, checked against integer priceMicro
+# Three paid cases and one free credential refusal in BOTH Claude Code and Codex:
+# six paid analyses, about $12 per run (about $2 each today).
+# Counterfact cap: $15 per run, $5 per analysis, checked against integer priceMicro
 # before exposing any reservation capability. Coding-agent provider charges are separate.
 # Keep MCP completion evidence, CLI summary, console upload receipt and findings URL.
 # Free every run: sign-in, MCP startup from package @counterfact-labs/cli, supported
@@ -11,7 +12,7 @@
 # Cache BOTH last attempted identities even after failure; hourly unchanged polls skip.
 # Restore and compare again under the paid lock so queued hourly polls do not repeat.
 # The v2 cache starts empty: the first hourly poll after merge launches the suite
-# (about $16). GitHub keeps only one pending job per group: a changed hourly poll
+# (about $12). GitHub keeps only one pending job per group: a changed hourly poll
 # may replace a pending nightly/release job, then skip after refreshing identities.
 # Nightly/manual/release runs always retry. Tag-ref caches cannot be read by scheduled
 # runs, so a later hourly poll may repeat a release run. Only paid jobs join concurrency.
@@ -201,7 +202,7 @@ jobs:
           COUNTERFACT_LIVE_TEST_KEY: ${{ secrets.COUNTERFACT_LIVE_TEST_KEY }}
         run: |
           set +x
-          scripts/live-agent-check.sh run --confirm-paid --max-dollars 20 --timeout-seconds 900
+          scripts/live-agent-check.sh run --confirm-paid --max-dollars 15 --timeout-seconds 900
 
       - name: Record attempted CLI version and production revision
         id: remember
