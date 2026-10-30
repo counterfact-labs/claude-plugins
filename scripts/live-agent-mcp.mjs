@@ -1,9 +1,13 @@
 import { spawn } from 'node:child_process';
+import { isAbsolute } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const args = process.argv.slice(2);
-if (args.length !== 3 || args[0] !== '-y' || !/^@counterfact-labs\/cli@(?:latest|\d+\.\d+\.\d+)$/.test(args[1]) || args[2] !== 'mcp') {
+// The plugin resolves npm from its own directory while the MCP process keeps the project cwd.
+const prefix = args[1]?.startsWith('--prefix=') ? args[1].slice('--prefix='.length) : undefined;
+const invocation = prefix === undefined ? args : [args[0], ...args.slice(2)];
+if ((prefix !== undefined && !isAbsolute(prefix)) || invocation.length !== 3 || invocation[0] !== '-y' || !/^@counterfact-labs\/cli@(?:latest|\d+\.\d+\.\d+)$/.test(invocation[1]) || invocation[2] !== 'mcp') {
   console.error('Only the published Counterfact MCP server may use this adapter'); process.exit(1);
 }
 const event = async (path, body) => {

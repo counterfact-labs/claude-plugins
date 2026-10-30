@@ -12,8 +12,10 @@ const script = fileURLToPath(new URL('./smoke-mcp.mjs', import.meta.url));
 const server = `#!${process.execPath}
 const { createInterface } = require('node:readline');
 const assert = require('node:assert/strict');
-assert.deepEqual(process.argv.slice(2), ['-y', '@counterfact-labs/cli@1.2.3', 'mcp']);
 const mode = process.env.FAKE_MCP_MODE;
+assert.deepEqual(process.argv.slice(2), mode === 'prefixed'
+  ? ['-y', '--prefix=' + process.cwd(), '@counterfact-labs/cli@1.2.3', 'mcp']
+  : ['-y', '@counterfact-labs/cli@1.2.3', 'mcp']);
 if (mode === 'unpublished') process.exit(1);
 if (mode === 'hang') setInterval(() => {}, 1000);
 let initialized = false;
@@ -58,7 +60,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 });
 `;
 
-function run(t, mode = 'ok', skill = 'Use `get_finding` and `mcp__plugin_counterfact_counterfact__analyze_agent`.', args = ['-y', '@counterfact-labs/cli@1.2.3', 'mcp']) {
+function run(t, mode = 'ok', skill = 'Use `get_finding` and `mcp__plugin_counterfact_counterfact__analyze_agent`.', args = ['-y', '@counterfact-labs/cli@1.2.3', 'mcp'], command = 'npx') {
   const root = mkdtempSync(join(tmpdir(), 'smoke-mcp-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'bin'));
@@ -66,7 +68,7 @@ function run(t, mode = 'ok', skill = 'Use `get_finding` and `mcp__plugin_counter
   writeFileSync(join(root, 'bin/npx'), server);
   chmodSync(join(root, 'bin/npx'), 0o755);
   writeFileSync(join(root, '.mcp.json'), JSON.stringify({
-    mcpServers: { counterfact: { command: 'npx', args } },
+    mcpServers: { counterfact: { ...(command === null ? {} : { command }), args } },
   }));
   writeFileSync(join(root, 'skills/nested/SKILL.md'), skill);
   return spawnSync(process.execPath, [script, root, mode === 'hang' ? '500' : '2000'], {
@@ -77,6 +79,18 @@ function run(t, mode = 'ok', skill = 'Use `get_finding` and `mcp__plugin_counter
 
 test('starts the exact npm pin and completes initialize and paginated tools/list', (t) => {
   const result = run(t);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /1\.2\.3.*2 required tools/);
+});
+
+test('uses the version checker npx default when the server command is omitted', (t) => {
+  const result = run(t, 'ok', undefined, undefined, null);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /1\.2\.3.*2 required tools/);
+});
+
+test('smokes the configured plugin command with its expanded npm prefix', (t) => {
+  const result = run(t, 'prefixed', undefined, ['-y', '--prefix=${CLAUDE_PLUGIN_ROOT}', '@counterfact-labs/cli@1.2.3', 'mcp']);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /1\.2\.3.*2 required tools/);
 });

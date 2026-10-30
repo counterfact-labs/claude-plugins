@@ -23,14 +23,14 @@ function skillTools(directory, tools = new Set()) {
 }
 
 async function main() {
-  const { pin, version } = cliPin(root);
+  const { command, args, version } = cliPin(root);
   const required = skillTools(join(root, 'skills'));
   if (!required.size) throw new Error('No required tool names found in skills.');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid smoke timeout.');
 
   // A process group lets cleanup terminate both npx and its spawned MCP server on CI's Linux runner.
   const grouped = process.platform !== 'win32';
-  const child = spawn('npx', ['-y', pin, 'mcp'], {
+  const child = spawn(command, args, {
     cwd: root, detached: grouped, stdio: ['pipe', 'pipe', 'inherit'],
   });
   const pending = new Map();
