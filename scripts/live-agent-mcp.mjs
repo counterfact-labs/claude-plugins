@@ -65,6 +65,7 @@ createInterface({ input: child.stdout }).on('line', line => {
   outputQueue = outputQueue.then(async () => {
     const message = JSON.parse(line), request = pending.get(message.id);
     if (request?.method === 'initialize') await event('/event', { kind: 'initialize', result: message.result });
+    if (request?.method === 'tools/list') await event('/event', { kind: 'tools', tools: message.result?.tools });
     if (request?.method === 'tools/call' && request.params?.name === 'analyze_agent') {
       await event('/event', { kind: 'analysis', result: message.result });
     }

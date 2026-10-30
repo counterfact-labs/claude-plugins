@@ -1,0 +1,3 @@
+# Deliberately fake GitHub token in the fictional live-suite prompt.
+# Git scans prefix this path:rule:line fingerprint with the commit; keep the path form too.
+scripts/fixtures/live-agent-credential/system_prompt.md:github-pat:12

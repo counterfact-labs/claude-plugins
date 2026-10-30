@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 
 export const consoleOrigin = 'https://app.counterfactlabs.com';
+export const analysisCeilingMicro = 5_000_000;
 
 const fixedEndpoints = new Map([
   ['/api/cli/checks', '/api/cli/checks'], ['/api/cli/checks/mode', '/api/cli/checks/mode'],
@@ -23,11 +24,11 @@ export function consoleUrl(path) {
 
 // The account key lives only here. MCP gets a sentinel credential; this transport
 // attaches the real bearer token only to the production console's HTTPS requests.
-export async function startBridge({ key, budget, folder }) {
+export async function startBridge({ key, budget, folder, free = false }) {
   const token = randomBytes(32).toString('hex');
   const failure = new AbortController();
   const pendingRequests = new Set();
-  const state = { attempts: 0, servers: [], results: [], receipts: [], reservations: new Map(), failures: [] };
+  const state = { attempts: 0, servers: [], results: [], receipts: [], reservations: new Map(), failures: [], findings: [], coverageSupported: false, reservationRequests: 0 };
   const fail = message => {
     state.failures.push(message);
     failure.abort(new Error(message));
@@ -74,6 +75,8 @@ export async function startBridge({ key, budget, folder }) {
       if (request.url === '/event') {
         if (body.kind === 'initialize') state.servers.push(body.result?.serverInfo);
         else if (body.kind === 'analysis') state.results.push(body.result);
+        else if (body.kind === 'tools') state.coverageSupported = body.tools?.some(tool => tool.name === 'analyze_agent' &&
+          tool.outputSchema?.properties?.coverage) ?? false;
         else throw fail(body.message || 'MCP protocol failed');
         reply(200, {}); return;
       }
@@ -81,8 +84,15 @@ export async function startBridge({ key, budget, folder }) {
       if (!request.url?.startsWith('/console/api/cli/') || !/^\/api\/cli\/(checks(?:\/mode|\/local)?|relay-reservations|balance|findings\/[\w-]+|fix-requests(?:\?.*)?)$/.test(path)) {
         throw fail('Unexpected console endpoint');
       }
+      if (path === '/api/cli/relay-reservations' && body.action === 'reserve') state.reservationRequests++;
+      if (free && request.method !== 'GET') {
+        // A release is safe even if reserve failed or the bridge already released it.
+        const allowed = path === '/api/cli/checks' || path === '/api/cli/relay-reservations' &&
+          ['create', 'reserve', 'fail'].includes(body.action);
+        if (!allowed) throw fail('Free probe attempted a paid operation');
+      }
       if (path === '/api/cli/relay-reservations' && body.action === 'reserve' &&
-          (state.attempts !== 1 || state.reservations.size)) throw fail('Unexpected additional reservation');
+          (!free && state.attempts !== 1 || state.reservations.size || state.reservationRequests !== 1)) throw fail('Unexpected additional reservation');
       const headers = {};
       for (const [name, value] of Object.entries(request.headers)) {
         if (!['host', 'connection', 'content-length', 'authorization', 'x-live-agent-token'].includes(name)) headers[name] = value;
@@ -97,23 +107,36 @@ export async function startBridge({ key, budget, folder }) {
           : typeof reservationId !== 'string' || reservationId !== body.reservationId ? 'reservationId'
           : !Number.isSafeInteger(priceMicro) || priceMicro < 0 ? 'priceMicro'
           : undefined;
-        if (invalidField || budget.used + priceMicro > budget.cap) {
+        if (invalidField || !free && (budget.used + priceMicro > budget.cap || priceMicro > analysisCeilingMicro)) {
           // Recording a failure stops the agent and starts bridge cleanup.
           // Finish releasing its hold before that cleanup can write the report.
           await release(body.reservationId);
           fail(invalidField === 'priceMicro' && priceMicro === null
             ? 'Analysis reservation priceMicro is unavailable; the test account is not on a priced plan'
-            : invalidField ? `Analysis reservation ${invalidField} is missing or invalid` : 'Total analysis priceMicro exceeds the cap');
+            : invalidField ? `Analysis reservation ${invalidField} is missing or invalid` : budget.used + priceMicro > budget.cap ? 'Total analysis priceMicro exceeds the cap' : `Per-analysis priceMicro exceeds the $${analysisCeilingMicro / 1e6} cap`);
           reply(403, { code: 'not_allowed', error: state.failures[0] }); return;
         }
-        budget.used += priceMicro;
+        if (!free) budget.used += priceMicro;
         state.reservations.set(reservationId, { priceMicro, projectId: result.value.projectId });
+        if (free) {
+          // The CLI needs the reserved price to enforce --max-dollars. Expose
+          // that price, never the real relay capability: even a broken CLI
+          // cannot start paid model work. It must release, or close() does.
+          reply(result.status, { ...result.value, reservationToken: 'live-agent-free-probe-no-relay-access' }); return;
+        }
+      }
+      if (free && path === '/api/cli/relay-reservations' && body.action === 'fail') {
+        if (result.status >= 300 || !['released', 'unheld'].includes(result.value.settlement)) throw fail('Could not release free probe reservation hold');
+        state.reservations.delete(body.reservationId);
       }
       if (path === '/api/cli/checks/local' && result.status < 300) {
         const reservation = state.reservations.get(body.reservationId);
         const receipt = result.value;
+        // contract/console.ts consoleIntakeResultSchema returns one ID per
+        // payload finding, in order; IDs may repeat.
         if (!reservation || receipt.projectId !== body.projectId || receipt.projectId !== reservation.projectId || receipt.checkId !== body.checkId ||
-            typeof receipt.analysisId !== 'string' || !Array.isArray(receipt.findingIds)) throw fail('Invalid console upload receipt');
+            typeof receipt.analysisId !== 'string' || !Array.isArray(receipt.findingIds) || receipt.findingIds.length !== (body.findings?.length ?? 0)) throw fail('Invalid console upload receipt');
+        state.findings.push(...(Array.isArray(body.findings) ? body.findings : []));
         state.receipts.push({ analysisId: receipt.analysisId, projectId: receipt.projectId,
           priceMicro: reservation.priceMicro, chargedMicro: receipt.settlement === 'charged' ? reservation.priceMicro : undefined });
         state.reservations.delete(body.reservationId);

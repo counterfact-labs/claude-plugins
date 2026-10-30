@@ -31,6 +31,18 @@ jobs:
             git cat-file -e "$BASE_SHA^{commit}"
             log_range="$BASE_SHA..$HEAD_SHA"
           fi
+          # Git-mode fingerprints include the commit. Exempt only the reviewed fake
+          # value; replacing it at the same path/line must still fail the scan.
+          fixture='scripts/fixtures/live-agent-credential/system_prompt.md'
+          while read -r commit; do
+            if ! line="$(git show "$commit:$fixture" 2>/dev/null | sed -n '12p')"; then
+              continue
+            fi
+            digest="$(printf '%s' "$line" | sha256sum)"
+            if [[ "${digest%% *}" == '475d94c6a2c22dfb82b62133b9fc0d551344b5cfde9ad57f58de98f97ea18987' ]]; then
+              printf '%s:%s:github-pat:12\n' "$commit" "$fixture" >> .gitleaksignore
+            fi
+          done < <(git rev-list "$log_range")
           # Released March 20, 2026 (Pacific); pin bytes as well as the version.
           docker run --rm \
             --user "$(id -u):$(id -g)" \
