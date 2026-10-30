@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 // These content contracts pin Arya's approved October 29, 2026 privacy wording.
-for (const path of ['README.md', 'skills/counterfact-analyze/SKILL.md']) {
+for (const path of ['README.md', 'skills/counterfact/SKILL.md']) {
   test(`${path} includes imported project files in the disclosed scope`, () => {
     const text = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
     assert.match(text, /Only the agent files you choose, and the project files they import, are sent\. Secret and ignored files are skipped\./);
@@ -18,7 +18,7 @@ for (const path of ['README.md', 'skills/counterfact-analyze/SKILL.md']) {
 }
 
 test('the skill attributes the notice without claiming a verbatim CLI quote', () => {
-  const text = readFileSync(new URL('../skills/counterfact-analyze/SKILL.md', import.meta.url), 'utf8');
+  const text = readFileSync(new URL('../skills/counterfact/SKILL.md', import.meta.url), 'utf8');
   assert.match(text, /first state Counterfact's privacy notice: "Counterfact says:/);
   assert.doesNotMatch(text, /verbatim/i);
 });

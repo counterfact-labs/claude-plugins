@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { startBridge } from './live-agent-bridge.mjs';
@@ -83,6 +83,7 @@ if (name === 'npx') {
   const pin=name==='claude'?'@counterfact-labs/cli@9.8.7':'@counterfact-labs/cli@latest';
   if (name === 'codex') {
     const config=fs.readFileSync(path.join(process.env.CODEX_HOME,'config.toml'),'utf8');
+    log({name:'codex-config',text:config});
     if (!config.includes(pin) || !config.includes('tool_timeout_sec = 900')) process.exit(7);
   }
   const child=spawn('npx',['-y',pin,'mcp'],{stdio:['pipe','pipe','inherit']});
@@ -102,9 +103,20 @@ if (name === 'npx') {
 }
 `;
 
+function reserveReply(overrides = {}) {
+  return {
+    reservationId: 'reservation-1', checkId: 'check-1', projectId: 'project-1',
+    state: 'reserved', settlement: 'held', reason: null, uploadState: 'missing',
+    quoteId: 'quote-1', priceMicro: 1000000, providerBudgetMicro: 2000000,
+    expiresAt: '2026-10-30T12:10:00.000Z', absoluteExpiresAt: '2026-10-30T12:30:00.000Z',
+    deadlineClassification: null, reservationToken: 'fictional-capability', ...overrides,
+  };
+}
+
 const upstream = `
 import { appendFileSync } from 'node:fs';
 const original=globalThis.fetch;
+const reserveReply=${reserveReply.toString()};
 let count=0;
 globalThis.fetch=async (input,options={})=>{
   const url=String(input);
@@ -116,9 +128,12 @@ globalThis.fetch=async (input,options={})=>{
   if(body.action==='reserve'&&process.env.FAKE_MODE==='refused-slow-reserve')await new Promise(resolve=>setTimeout(resolve,1300));
   let result;
   if(body.action==='create') result={reservationId:'reservation-'+(++count),checkId:'check-'+count,projectId:'project-1',state:'quoted'};
-  else if(body.action==='reserve') result={reservationId:body.reservationId,projectId:'project-1',state:'reserved',settlement:'held',
-    priceMicro:['unknown-price','invalid-release-network'].includes(process.env.FAKE_MODE)?null:process.env.FAKE_MODE==='over-cap'||process.env.FAKE_MODE.startsWith('refused-')?6000000:process.env.FAKE_MODE==='total-cap'?3000000:1000000,
-    reservationToken:'fictional-capability'};
+  else if(body.action==='reserve') {
+    const mode=process.env.FAKE_MODE;
+    result=reserveReply({reservationId:body.reservationId,checkId:'check-'+count,
+      priceMicro:['unpriced-plan','unknown-price','invalid-release-network'].includes(mode)?null:mode==='free-personal'?0:mode==='priced-personal'?1990000:mode==='over-cap'||mode.startsWith('refused-')?6000000:mode==='total-cap'?3000000:1000000,
+      providerBudgetMicro:['unknown-price','invalid-release-network'].includes(mode)?null:mode==='free-personal'||mode==='priced-personal'?25000000:2000000});
+  }
   else if(body.action==='fail') {
     const mode=process.env.FAKE_MODE;
     if(mode.startsWith('refused-')||mode==='invalid-release-network'||mode.startsWith('cleanup-')) {
@@ -202,6 +217,14 @@ test('check describes published installs, both prompts, isolation and cost gate 
   for(const pattern of [/claude plugin marketplace add.*main/,/claude plugin install counterfact@counterfact-labs/,/claude -p/,/codex exec/,/@counterfact-labs\/cli@latest/,/2\.50/,/--confirm-paid/,/COUNTERFACT_LIVE_TEST_KEY/,/scripts\/fixtures\/live-agent/,/No network/])assert.match(r.stdout,pattern);
 });
 
+test('preview explains Codex MCP approval and the priceMicro gate',async t=>{
+  const r=await run(t,['check'],'ok','');
+  assert.equal(r.status,0,r.stderr);assert.deepEqual(r.calls,[]);
+  assert.match(r.stdout,/Codex config:.*approval_policy=never.*default_tools_approval_mode=approve/);
+  assert.match(r.stdout,/Withhold each reservation capability until its priceMicro is a nonnegative safe integer and the combined price fits the cap; otherwise release the hold before model work\./);
+  assert.doesNotMatch(r.stdout,/providerBudgetMicro|workspace allowance|provider budget/);
+});
+
 for(const [args,key,pattern] of [
   [['run'],'fictional-live-key',/--confirm-paid/],
   [['run','--confirm-paid'],'',/COUNTERFACT_LIVE_TEST_KEY/],
@@ -228,11 +251,111 @@ test('both released integrations complete with isolated homes, real MCP evidence
   assert.equal(r.calls.filter(c=>c.name==='model-work').length,2);
 });
 
+test('headless Codex receives MCP approval in its counterfact server config',async t=>{
+  const r=await run(t);
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  const config=r.calls.find(c=>c.name==='codex-config')?.text;
+  assert.equal(typeof config,'string');
+  assert.match(config,/^approval_policy = "never"$/m);
+  assert.match(config,/^sandbox_mode = "read-only"$/m);
+  const server=config.split('[mcp_servers.counterfact]\n')[1]?.split(/\n\[/)[0]??'';
+  assert.match(server,/^default_tools_approval_mode = "approve"$/m);
+});
+
+test('null price with a valid provider budget fails as an unpriced test account before model work',async t=>{
+  const r=await run(t,undefined,'unpriced-plan');
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  for(const name of ['Claude','Codex']) {
+    const row=r.stdout.split('\n').find(line=>line.startsWith('FAIL '+name));
+    assert.ok(row?.endsWith('Analysis reservation priceMicro is unavailable; the test account is not on a priced plan'),r.stdout);
+  }
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,0);
+  assert.equal(r.calls.filter(c=>c.name==='console'&&c.action==='fail').length,2);
+  assert.doesNotMatch(r.stdout+r.stderr,/fictional-live-key|fictional-capability/);
+});
+
+test('two Personal prices fit the shared five dollar cap regardless of provider budgets',async t=>{
+  const r=await run(t,undefined,'priced-personal');
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.match(r.stdout,/total Counterfact cap \$5\.00/);
+  assert.equal(r.stdout.match(/estimate \$1\.99; charged \(equals estimate\) \$1\.99/g)?.length,2);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,2);
+  assert.doesNotMatch(r.stdout,/workspace allowance|provider budget/);
+});
+
+test('free Personal reservations count their zero price rather than the provider budget',async t=>{
+  const r=await run(t,['run','--confirm-paid','--max-dollars','0.000001'],'free-personal');
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.equal(r.stdout.match(/estimate \$0\.00; charged \(equals estimate\) \$0\.00/g)?.length,2);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,2);
+});
+
 for(const mode of ['over-cap','unknown-price','total-cap'])test('withholds model work and releases the hold for '+mode,async t=>{
   const r=await run(t,undefined,mode);assert.notEqual(r.status,0,r.stdout);assert.match(r.stdout,/FAIL/);
-  assert.match(r.stdout,/cap|price|estimate/i);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode==='total-cap'?1:0);
+  assert.match(r.stdout,mode==='unknown-price'?/Analysis reservation priceMicro is unavailable; the test account is not on a priced plan/
+    :/Total analysis priceMicro exceeds the cap/);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode.endsWith('total-cap')?1:0);
   assert.ok(r.calls.some(c=>c.name==='console'&&c.action==='fail'));
+});
+
+for(const [label,overrides,field] of [
+  ['null price with a valid provider budget',{priceMicro:null},'priceMicro'],
+  ['missing price',{priceMicro:undefined},'priceMicro'],
+  ...[-1,1.5,Number.MAX_SAFE_INTEGER+1,'reply-value-must-stay-private',{}].map(value=>['invalid price '+JSON.stringify(value),{priceMicro:value},'priceMicro']),
+  ['invalid state',{state:'reply-value-must-stay-private'},'state'],
+  ['invalid settlement',{settlement:'reply-value-must-stay-private'},'settlement'],
+  ['mismatched reservation',{reservationId:'reply-value-must-stay-private'},'reservationId'],
+])test('reserve refusal identifies the field and releases before failing: '+label,async t=>{
+  const original=globalThis.fetch;
+  const budget={used:0,cap:5000000};
+  const bridge=await startBridge({key:'fictional-live-key',budget,folder:resolve(fixtureDir)});
+  t.after(()=>bridge.close());
+  let released=false;
+  t.mock.method(globalThis,'fetch',async(input,options)=>{
+    if(!String(input).startsWith('https://app.counterfactlabs.com/'))return original(input,options);
+    const body=JSON.parse(options.body);
+    if(body.action==='reserve')return Response.json(reserveReply(overrides));
+    assert.equal(body.action,'fail');assert.equal(body.reservationId,'reservation-1');
+    assert.equal(bridge.signal.aborted,false,'hold release must finish before aborting the run');
+    released=true;return Response.json({settlement:'released'});
+  });
+  const post=(path,body)=>fetch(bridge.url+path,{method:'POST',headers:{'x-live-agent-token':bridge.token},body:JSON.stringify(body)});
+  assert.equal((await post('/begin',{path:'.'})).status,200);
+  const response=await post('/console/api/cli/relay-reservations',{action:'reserve',reservationId:'reservation-1'});
+  assert.equal(response.status,403);
+  const reply=await response.json();
+  assert.match(reply.error,new RegExp(field));
+  assert.equal(reply.error,overrides.priceMicro===null
+    ? 'Analysis reservation priceMicro is unavailable; the test account is not on a priced plan'
+    : `Analysis reservation ${field} is missing or invalid`);
+  assert.doesNotMatch(JSON.stringify(reply),/reply-value-must-stay-private|fictional-capability/);
+  assert.equal(released,true);assert.equal(bridge.signal.aborted,true);
+  assert.equal(budget.used,0);assert.equal(bridge.state.reservations.size,0);
+});
+
+test('priced receipt and cap debit use only priceMicro',async t=>{
+  const original=globalThis.fetch;
+  const budget={used:0,cap:5000000};
+  const bridge=await startBridge({key:'fictional-live-key',budget,folder:resolve(fixtureDir)});
+  t.after(()=>bridge.close());
+  t.mock.method(globalThis,'fetch',async(input,options)=>{
+    if(!String(input).startsWith('https://app.counterfactlabs.com/'))return original(input,options);
+    const body=JSON.parse(options.body);
+    if(body.action==='reserve')return Response.json(reserveReply({priceMicro:1990000,providerBudgetMicro:25000000}));
+    if(body.action==='fail')return Response.json({settlement:'released'});
+    return Response.json({checkId:body.checkId,projectId:body.projectId,analysisId:'analysis-1',findingIds:[],settlement:'charged'});
+  });
+  const post=(path,body)=>fetch(bridge.url+'/console'+path,{method:'POST',headers:{'x-live-agent-token':bridge.token},body:JSON.stringify(body)});
+  assert.equal((await fetch(bridge.url+'/begin',{method:'POST',headers:{'x-live-agent-token':bridge.token},body:JSON.stringify({path:'.'})})).status,200);
+  const reserved=await post('/api/cli/relay-reservations',{action:'reserve',reservationId:'reservation-1'});
+  assert.equal(reserved.status,200,JSON.stringify(await reserved.json()));
+  const uploaded=await post('/api/cli/checks/local',{reservationId:'reservation-1',projectId:'project-1',checkId:'check-1'});
+  assert.equal(uploaded.status,200);
+  assert.equal(budget.used,1990000);
+  assert.deepEqual(bridge.state.receipts[0],{
+    analysisId:'analysis-1',projectId:'project-1',priceMicro:1990000,chargedMicro:1990000,
+  });
+  assert.deepEqual(bridge.state.failures,[]);
 });
 
 for(const mode of ['refused-status','refused-settlement','refused-network','refused-timeout','refused-slow-network','refused-slow-reserve','invalid-release-network','cleanup-network','cleanup-after-failure']) {

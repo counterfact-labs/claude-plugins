@@ -8,7 +8,7 @@
 #
 # What it does: installs pinned Claude Code and Codex, installs the published plugin and CLI,
 # and has each agent analyze the fictional agent in scripts/fixtures/live-agent with
-# --max-dollars 5 (Counterfact estimates only; provider charges are separate) and a 900-second
+# --max-dollars 5 (Counterfact prices only; provider charges are separate) and a 900-second
 # deadline per command. Only the paid job joins the concurrency group. Both agents must produce
 # MCP completion evidence, a CLI summary, a matching console upload receipt, and a findings URL.
 #
