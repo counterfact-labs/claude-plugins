@@ -38,14 +38,37 @@ test('older CLI global help can report lack of cap even when analyze help is uns
 });
 
 
+const otherUrls=[
+  'https://www.npmjs.com.example.com/package/@counterfact-labs/cli',
+  'https://notnpmjs.com/package/@counterfact-labs/cli',
+  'https://docs.example.com/npmjs.com',
+  'https://docs.example.com/?next=https://www.npmjs.com',
+  'https://www.npmjs.com@docs.example.com/package/@counterfact-labs/cli',
+];
+
 test('npm package page HTTP 403 is explicitly not checkable, while other errors still fail',async()=>{
   const url='https://www.npmjs.com/package/@counterfact-labs/cli';
-  const rows=await probes.checkLinks('[CLI]('+url+')',async url=>({status:url.includes('npmjs.com')?403:200,url}));
+  const readme='[CLI]('+url+') '+otherUrls.map(other=>'[Other]('+other+')').join(' ');
+  const rows=await probes.checkLinks(readme,async requested=>({status:new URL(requested).hostname==='www.npmjs.com'?403:200,url:requested}));
   assert.deepEqual(rows.find(r=>r.case===url),{backend:'free',case:url,pass:true,reason:'SKIP: npm package page not checkable (HTTP 403; external access block)'});
+  for(const otherUrl of otherUrls) {
+    assert.deepEqual(rows.find(r=>r.case===otherUrl),{backend:'free',case:otherUrl,pass:true,reason:'HTTP 200'});
+  }
   for(const status of [404,500]) {
     const rows=await probes.checkLinks('[CLI]('+url+')',async url=>({status,url}));
     assert.equal(rows.find(r=>r.case===url).pass,false);
   }
   const rows2=await probes.checkLinks('[Other](https://docs.example.com/a)',async url=>({status:403,url}));
   assert.ok(rows2.every(r=>!r.pass));
+});
+
+test('HTTP 403 skips only the exact npm package URL and fails every lookalike',async()=>{
+  const url='https://www.npmjs.com/package/@counterfact-labs/cli';
+  const readme='[CLI]('+url+') '+otherUrls.map(other=>'[Other]('+other+')').join(' ');
+  const rows=await probes.checkLinks(readme,async requested=>({status:403,url:requested}));
+  assert.deepEqual(rows,[
+    {backend:'free',case:'https://counterfactlabs.com/setup',pass:false,reason:'HTTP 403'},
+    {backend:'free',case:url,pass:true,reason:'SKIP: npm package page not checkable (HTTP 403; external access block)'},
+    ...otherUrls.map(other=>({backend:'free',case:other,pass:false,reason:'HTTP 403'})),
+  ]);
 });

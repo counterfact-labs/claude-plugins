@@ -173,8 +173,11 @@ const reserveReply=${reserveReply.toString()};
 let count=0;
 globalThis.fetch=async (input,options={})=>{
   const url=String(input);
-  if (!url.startsWith('http://127.0.0.1:') && !url.startsWith('https://app.counterfactlabs.com/')) return {status:process.env.FAKE_MODE==='cli-029'&&url==='https://www.npmjs.com/package/@counterfact-labs/cli'?403:200,url};
-  if (!url.startsWith('https://app.counterfactlabs.com/')) return original(input,options);
+  const requested=new URL(url);
+  const isBridge=process.env.LIVE_AGENT_BRIDGE && requested.origin===new URL(process.env.LIVE_AGENT_BRIDGE).origin;
+  const isConsole=requested.hostname==='app.counterfactlabs.com';
+  if (!isBridge && !isConsole) return {status:process.env.FAKE_MODE==='cli-029'&&url==='https://www.npmjs.com/package/@counterfact-labs/cli'?403:200,url};
+  if (!isConsole) return original(input,options);
   const headers=new Headers(options.headers);
   if(headers.get('authorization')!=='Bearer fictional-live-key') throw Error('wrong runtime sign-in');
   const body=options.body?JSON.parse(options.body):{};
