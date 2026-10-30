@@ -11,6 +11,22 @@ const script = fileURLToPath(new URL('./check-version.mjs', import.meta.url));
 const cases = [
   { name: 'accepts matching versions', status: 0 },
   {
+    name: 'checks the same string arguments that the smoke client starts',
+    args: [null, 42, {}, '-y', '@counterfact-labs/cli@1.2.3', 'mcp'],
+    status: 0,
+  },
+  {
+    name: 'accepts a pinned startup command with a neutral npm prefix',
+    args: ['-y', '--prefix=${CLAUDE_PLUGIN_ROOT}', '@counterfact-labs/cli@1.2.3', 'mcp'],
+    readme: '`npx -y --prefix="${CLAUDE_PLUGIN_ROOT}" @counterfact-labs/cli@1.2.3 mcp`',
+    status: 0,
+  },
+  {
+    name: 'rejects README startup text that omits the configured npm prefix',
+    args: ['-y', '--prefix=${CLAUDE_PLUGIN_ROOT}', '@counterfact-labs/cli@1.2.3', 'mcp'],
+    error: /README\.md must include/,
+  },
+  {
     name: 'accepts the 0.2.5 plugin, CLI, and README example',
     pin: '0.2.5',
     version: '0.2.5',

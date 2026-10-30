@@ -21,11 +21,11 @@ const read = (path, parseJson = false) => {
 const plugin = read('.claude-plugin/plugin.json', true);
 let release;
 try {
-  release = cliPin(root);
+  release = cliPin(root, '${CLAUDE_PLUGIN_ROOT}');
 } catch (error) {
   fail(error.message);
 }
-const { mcp, pin, version } = release;
+const { mcp, version, command, args } = release;
 const readme = read('README.md');
 
 function* strings(value) {
@@ -58,7 +58,10 @@ for (const mention of readme.matchAll(/@counterfact-labs\/cli@([^\s`'"]*?)(?=[.,
   }
 }
 // A missing startup pin would hide drift even when every remaining mention agrees.
-if (!readme.includes('`npx -y ' + pin + ' mcp`')) {
-  fail(`README.md must include a pinned npx ${pin} mcp command.`);
+const startupCommand = [command, ...args.map((arg) =>
+  arg.startsWith('--prefix=')
+    ? '--prefix=' + JSON.stringify(arg.slice('--prefix='.length)) : arg)].join(' ');
+if (!readme.includes('`' + startupCommand + '`')) {
+  fail(`README.md must include a pinned ${startupCommand} command.`);
 }
 console.log(`Plugin version ${plugin.version} is valid; CLI pin and README versions agree at ${version}.`);

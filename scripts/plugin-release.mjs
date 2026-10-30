@@ -14,7 +14,8 @@ export function compareVersions(a, b) {
   return difference === -1 ? 0 : aParts[difference] > bParts[difference] ? 1 : -1;
 }
 
-export function cliPin(root) {
+// README checks keep the literal placeholder; launchers expand it to the plugin folder.
+export function cliPin(root, pluginRoot = root) {
   let mcp;
   try {
     mcp = JSON.parse(readFileSync(join(root, '.mcp.json'), 'utf8'));
@@ -23,7 +24,8 @@ export function cliPin(root) {
   }
 
   const prefix = '@counterfact-labs/cli@';
-  const args = mcp?.mcpServers?.counterfact?.args;
+  const server = mcp?.mcpServers?.counterfact;
+  const args = server?.args;
   const pin = Array.isArray(args)
     ? args.find((arg) => typeof arg === 'string' && arg.startsWith(prefix))
     : undefined;
@@ -33,5 +35,10 @@ export function cliPin(root) {
   if (!isStableVersion(version)) {
     throw new Error(`The Counterfact CLI pin ${version} must be an exact X.Y.Z version.`);
   }
-  return { mcp, pin, version };
+  return {
+    mcp, pin, version,
+    command: server.command ?? 'npx',
+    args: args.filter((arg) => typeof arg === 'string')
+      .map((arg) => arg.replaceAll('${CLAUDE_PLUGIN_ROOT}', pluginRoot)),
+  };
 }
