@@ -1,24 +1,23 @@
-# Live agent release check (internal operations notes; kept out of the public README).
-#
-# When it runs: on a published plugin release, by manual dispatch, Mondays at 06:23 UTC, and at
-# minute 17 of every hour, when the latest @counterfact-labs/cli version on npm differs from the
-# last attempted analysis. The attempted version is cached even if the analysis fails, so hourly
-# polls do not retry a failing version; weekly, manual, and release runs do retry. Release runs
-# cache on their tag ref, which scheduled runs cannot read, so the next hourly poll may repeat.
-#
-# What it does: installs pinned Claude Code and Codex, installs the published plugin and CLI,
-# and has each agent analyze the fictional agent in scripts/fixtures/live-agent with
-# --max-dollars 5 (Counterfact prices only; provider charges are separate) and a 900-second
-# deadline per command. Only the paid job joins the concurrency group. Both agents must produce
-# MCP completion evidence, a CLI summary, a matching console upload receipt, and a findings URL.
-#
-# Secrets (Actions secrets in this repo): ANTHROPIC_API_KEY, OPENAI_API_KEY, and
-# COUNTERFACT_LIVE_TEST_KEY (the smoke@ test account's CLI key). Missing secrets produce a
-# warning that names them; values are never printed.
-#
-# Local use: scripts/live-agent-check.sh check previews commands without network calls;
-# scripts/live-agent-check.sh run --confirm-paid --max-dollars 5 runs it. Offline tests:
-# node --test --test-concurrency=4 scripts/*.test.mjs (the workflow test needs PyYAML).
+# Live agent integration suite (internal operations; no public README changes).
+# Four cases in BOTH Claude Code and Codex: eight paid analyses, about $2 each today.
+# Counterfact cap: $20 per run, $5 per analysis, checked against integer priceMicro
+# before exposing any reservation capability. Coding-agent provider charges are separate.
+# Keep MCP completion evidence, CLI summary, console upload receipt and findings URL.
+# Free every run: sign-in, MCP startup from package @counterfact-labs/cli, supported
+# over-cap refusal, /setup (not-yet-live allowed) and README links.
+# Launches: published plugin release, manual dispatch, nightly at 03:23 Pacific,
+# and hourly npm version + public production /api/health revision polling (no cross-repo token).
+# UTC candidates 10:23 (PDT) and 11:23 (PST); gate by America/Los_Angeles to follow DST.
+# Cache BOTH last attempted identities even after failure; hourly unchanged polls skip.
+# Restore and compare again under the paid lock so queued hourly polls do not repeat.
+# The v2 cache starts empty: the first hourly poll after merge launches the suite
+# (about $16). GitHub keeps only one pending job per group: a changed hourly poll
+# may replace a pending nightly/release job, then skip after refreshing identities.
+# Nightly/manual/release runs always retry. Tag-ref caches cannot be read by scheduled
+# runs, so a later hourly poll may repeat a release run. Only paid jobs join concurrency.
+# Secrets: ANTHROPIC_API_KEY, OPENAI_API_KEY, COUNTERFACT_LIVE_TEST_KEY; never print values.
+# Offline preview: scripts/live-agent-check.sh check. Offline tests (PyYAML required):
+# node --test --test-concurrency=4 scripts/live-agent-{cases,check,gitleaks,probes,workflow}.test.mjs
 
 name: Live agent release analysis
 
@@ -28,19 +27,21 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '17 * * * *'
-    - cron: '23 6 * * 1'
+    - cron: '23 10 * * *'
+    - cron: '23 11 * * *'
 
 permissions:
   contents: read
 
 jobs:
   poll:
-    name: Poll CLI release
+    name: Poll CLI and production release
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       run: ${{ steps.cli.outputs.run }}
       version: ${{ steps.cli.outputs.version }}
+      revision: ${{ steps.cli.outputs.revision }}
     defaults:
       run:
         shell: bash
@@ -53,7 +54,7 @@ jobs:
           COUNTERFACT_LIVE_TEST_KEY: ${{ secrets.COUNTERFACT_LIVE_TEST_KEY }}
         run: |
           set +x
-          printf 'LIVE_AGENT_VERSION_FILE=%s/live-agent-version/last-version\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'LIVE_AGENT_VERSION_FILE=%s/live-agent-version/last-version\nLIVE_AGENT_REVISION_FILE=%s/live-agent-version/last-revision\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
           missing=()
           for name in ANTHROPIC_API_KEY OPENAI_API_KEY COUNTERFACT_LIVE_TEST_KEY; do
             value="${!name}"
@@ -77,29 +78,67 @@ jobs:
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         if: steps.credentials.outputs.ready == 'true'
         with:
-          path: ${{ env.LIVE_AGENT_VERSION_FILE }}
-          key: live-agent-cli-version-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: live-agent-cli-version-v1-
+          path: |
+            ${{ env.LIVE_AGENT_VERSION_FILE }}
+            ${{ env.LIVE_AGENT_REVISION_FILE }}
+          key: live-agent-releases-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: live-agent-releases-v2-
 
-      - name: Compare published CLI version
+      - name: Compare CLI version and production revision
         id: cli
         if: steps.credentials.outputs.ready == 'true'
         timeout-minutes: 2
         env:
           EVENT_SCHEDULE: ${{ github.event.schedule }}
-        run: |
+        run: &compare_releases |
+          # Select by cron identity and Pacific offset, so delayed Actions starts
+          # cannot admit the wrong candidate or discard a valid nightly launch.
+          if [[ "$GITHUB_JOB" == 'poll' && "$GITHUB_EVENT_NAME" == 'schedule' && ( "$EVENT_SCHEDULE" == '23 10 * * *' || "$EVENT_SCHEDULE" == '23 11 * * *' ) ]]; then
+            offset="$(TZ=America/Los_Angeles date +%z)"
+            case "$offset" in
+              -0700) nightly='23 10 * * *' ;;
+              -0800) nightly='23 11 * * *' ;;
+              *) echo '::error::Unexpected Pacific UTC offset'; exit 1 ;;
+            esac
+            if [[ "$EVENT_SCHEDULE" != "$nightly" ]]; then
+              echo 'run=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           latest="$(npm view @counterfact-labs/cli version)"
           if [[ ! "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo '::error::npm did not return a valid CLI release version'
             exit 1
           fi
+          if health="$(curl --fail --silent --show-error --max-time 20 https://app.counterfactlabs.com/api/health)" &&
+            revision="$(printf '%s' "$health" | node -e '
+            let text=""; process.stdin.on("data", chunk => text += chunk);
+            process.stdin.on("end", () => {
+              try {
+                const value = JSON.parse(text);
+                if (value.ok !== true || typeof value.revision !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(value.revision)) throw Error();
+                process.stdout.write(value.revision);
+              } catch { console.error("Invalid production health revision"); process.exitCode = 1; }
+            });')"; then
+            :
+          elif [[ "$GITHUB_EVENT_NAME" == 'schedule' && "$EVENT_SCHEDULE" == *' * * * *' ]]; then
+            echo '::error::Hourly polls require a valid production revision'
+            exit 1
+          else
+            echo '::warning::Production revision unavailable; continuing the requested launch'
+            revision='unknown'
+          fi
           previous=''
+          previous_revision=''
+          if [[ -f "$LIVE_AGENT_REVISION_FILE" ]]; then
+            previous_revision="$(cat "$LIVE_AGENT_REVISION_FILE")"
+          fi
           if [[ -f "$LIVE_AGENT_VERSION_FILE" ]]; then
             previous="$(cat "$LIVE_AGENT_VERSION_FILE")"
           fi
-          printf 'version=%s\n' "$latest" >> "$GITHUB_OUTPUT"
-          # The cron definition owns the minute; only hourly runs skip unchanged versions.
-          if [[ "$GITHUB_EVENT_NAME" == 'schedule' && "$EVENT_SCHEDULE" == *' * * * *' && "$previous" == "$latest" ]]; then
+          printf 'version=%s\nrevision=%s\n' "$latest" "$revision" >> "$GITHUB_OUTPUT"
+          # The cron definition owns the minute; only hourly runs skip unchanged release identities.
+          if [[ "$GITHUB_EVENT_NAME" == 'schedule' && "$EVENT_SCHEDULE" == *' * * * *' && "$previous" == "$latest" && "$previous_revision" == "$revision" ]]; then
             echo 'run=false' >> "$GITHUB_OUTPUT"
           else
             echo 'run=true' >> "$GITHUB_OUTPUT"
@@ -110,8 +149,9 @@ jobs:
     needs: poll
     if: needs.poll.outputs.run == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    # No-op polls never enter the paid group or replace its pending job.
+    timeout-minutes: 200
+    # Unchanged polls skip this group. Changed polls can replace a pending launch;
+    # the second comparison avoids repeat spending, but that launch may be lost.
     concurrency:
       group: live-agent-check
       cancel-in-progress: false
@@ -120,7 +160,7 @@ jobs:
         shell: bash
     steps:
       - name: Initialize version state
-        run: printf 'LIVE_AGENT_VERSION_FILE=%s/live-agent-version/last-version\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+        run: printf 'LIVE_AGENT_VERSION_FILE=%s/live-agent-version/last-version\nLIVE_AGENT_REVISION_FILE=%s/live-agent-version/last-revision\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -130,34 +170,58 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Refresh last attempted release identities inside the paid lock
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ${{ env.LIVE_AGENT_VERSION_FILE }}
+            ${{ env.LIVE_AGENT_REVISION_FILE }}
+          key: live-agent-releases-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: live-agent-releases-v2-
+
+      - name: Recheck releases inside the paid lock
+        id: recheck
+        timeout-minutes: 2
+        env:
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: *compare_releases
+
       - name: Install pinned coding agents
+        if: steps.recheck.outputs.run == 'true'
         timeout-minutes: 10
         run: npm install --global @anthropic-ai/claude-code@2.1.312 @openai/codex@0.165.0
 
       - name: Run live agent analysis
         id: analysis
-        timeout-minutes: 65
+        if: steps.recheck.outputs.run == 'true'
+        timeout-minutes: 180
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           COUNTERFACT_LIVE_TEST_KEY: ${{ secrets.COUNTERFACT_LIVE_TEST_KEY }}
         run: |
           set +x
-          scripts/live-agent-check.sh run --confirm-paid --max-dollars 5 \
-            --agent-dir "$GITHUB_WORKSPACE/scripts/fixtures/live-agent" --timeout-seconds 900
+          scripts/live-agent-check.sh run --confirm-paid --max-dollars 20 --timeout-seconds 900
 
-      - name: Record attempted CLI version
+      - name: Record attempted CLI version and production revision
         id: remember
         if: always() && needs.poll.outputs.run == 'true' && steps.analysis.outcome != 'skipped'
         env:
-          CLI_VERSION: ${{ needs.poll.outputs.version }}
+          CLI_VERSION: ${{ steps.recheck.outputs.version }}
+          DEPLOY_REVISION: ${{ steps.recheck.outputs.revision }}
         run: |
           mkdir -p "$(dirname "$LIVE_AGENT_VERSION_FILE")"
           printf '%s\n' "$CLI_VERSION" > "$LIVE_AGENT_VERSION_FILE"
+          # An outage must not make the next hourly poll rediscover a known deploy.
+          if [[ "$DEPLOY_REVISION" != 'unknown' ]]; then
+            printf '%s\n' "$DEPLOY_REVISION" > "$LIVE_AGENT_REVISION_FILE"
+          fi
 
-      - name: Save last attempted CLI version
+      - name: Save last attempted release identities
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         if: always() && needs.poll.outputs.run == 'true' && steps.remember.outcome == 'success'
         with:
-          path: ${{ env.LIVE_AGENT_VERSION_FILE }}
-          key: live-agent-cli-version-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.LIVE_AGENT_VERSION_FILE }}
+            ${{ env.LIVE_AGENT_REVISION_FILE }}
+          key: live-agent-releases-v2-${{ github.run_id }}-${{ github.run_attempt }}

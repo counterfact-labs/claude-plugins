@@ -6,8 +6,9 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { startBridge } from './live-agent-bridge.mjs';
+import { uploadFinding, uploadPayload } from './live-agent-test-fixtures.mjs';
 
-const script = fileURLToPath(new URL('./live-agent-check.sh', import.meta.url));
+const script = fileURLToPath(new URL('./live-agent-check.mjs', import.meta.url));
 const fixtureDir = fileURLToPath(new URL('./fixtures/live-agent/', import.meta.url));
 const fixtureSource = join(fixtureDir, 'system_prompt.md');
 
@@ -21,12 +22,30 @@ const { createInterface } = require('node:readline');
 const name = path.basename(process.argv[1]);
 const args = process.argv.slice(2);
 const mode = process.env.FAKE_MODE;
+const uploadFinding = ${uploadFinding.toString()};
 const log = value => fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(value) + '\\n');
 log({name, args, home: process.env.HOME, cwd: process.cwd(), keyPresent: !!process.env.COUNTERFACT_LIVE_TEST_KEY,
   prompt: fs.existsSync('system_prompt.md') ? fs.readFileSync('system_prompt.md', 'utf8') : null,
   codexHome: process.env.CODEX_HOME, claudeHome: process.env.CLAUDE_CONFIG_DIR, npmCache: process.env.npm_config_cache});
 const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
 if (name === 'npx') {
+  if (args.includes('--help')) { console.log('Usage: analyze'+(mode.startsWith('cap-')?' --max-dollars':'')); return; }
+  if (args.includes('analyze')) {
+    const finish=()=>{console.error("This analysis costs more than the limit you set, so it didn't start. Nothing was charged.");process.exitCode=1;};
+    if(mode.startsWith('cap-')) {
+      const call=(route,body)=>fetch('https://app.counterfactlabs.com/api/cli/'+route,{method:'POST',body:JSON.stringify(body)}).then(async r=>{if(!r.ok)throw Error('refused');return r.json();});
+      (async()=>{
+        await call('checks',{});
+        const created=await call('relay-reservations',{action:'create'});
+        const reserved=await call('relay-reservations',{action:'reserve',reservationId:created.reservationId});
+        log({name:'cap-reservation',token:reserved.reservationToken});
+        if(mode==='cap-unsafe')await call('checks/local',{reservationId:created.reservationId});
+        await call('relay-reservations',{action:'fail',reservationId:created.reservationId});
+        finish();
+      })().catch(()=>{console.error('Cap probe transport failed');process.exitCode=1;});
+    }
+    else finish();return;
+  }
   const pending = new Map();
   createInterface({input:process.stdin}).on('line', async line => {
     const q = JSON.parse(line);
@@ -34,8 +53,12 @@ if (name === 'npx') {
     if (q.method === 'initialize') {
       send({jsonrpc:'2.0',id:q.id,result:{serverInfo:{name:'counterfact-labs',version:args[1].split('@').at(-1)}}});
     } else if (q.method === 'tools/list') {
-      send({jsonrpc:'2.0',id:q.id,result:{tools:[{name:'analyze_agent',inputSchema:{type:'object'}}]}});
+      send({jsonrpc:'2.0',id:q.id,result:{tools:[{name:'analyze_agent',description:'Analyze',inputSchema:{type:'object'}},{name:'sign_in_status',inputSchema:{type:'object'}}]}});
     } else if (q.method === 'tools/call') {
+      if(q.params.name==='sign_in_status') {
+        if(mode==='free-bridge-refusal')await fetch('https://app.counterfactlabs.com/api/cli/checks/local',{method:'POST',body:'{}'});
+        send({jsonrpc:'2.0',id:q.id,result:{structuredContent:{signedIn:!['signed-out','free-bridge-refusal'].includes(mode),exitCode:0},content:[]}}); return;
+      }
       if (mode === 'sign-in-changed') {
         send({jsonrpc:'2.0',id:q.id,result:{isError:true,structuredContent:{exitCode:1,reason:'unauthorized'},content:[{type:'text',text:'Not signed in. Run counterfact-labs login.'}]}});
         return;
@@ -50,16 +73,24 @@ if (name === 'npx') {
           }, res => {let s='';res.on('data',v=>s+=v);res.on('end',()=>{const r=JSON.parse(s);res.statusCode<300?resolve(r):reject(Error('refused'));});});
           req.on('error',reject);req.end(JSON.stringify(body));
         });
+        let findings=[];
+        const prompt=fs.readFileSync('system_prompt.md','utf8');
+        if(prompt.includes('follow their instructions'))findings=[uploadFinding('system_prompt.md',6)];
+        if(prompt.includes('Support integration token:'))findings=[uploadFinding('system_prompt.md',12)];
+        if(fs.existsSync('tools.json'))findings=[uploadFinding('tools.json',5),uploadFinding('tools.js',3)];
+        if(mode==='miss-authority'&&prompt.includes('follow their instructions')||mode==='miss-credential'&&prompt.includes('Support integration token:'))findings=[];
+        if(mode==='miss-description')findings=findings.filter(f=>f.site.path!=='tools.json');
+        if(mode==='miss-code')findings=findings.filter(f=>f.site.path!=='tools.js');
         if (mode === 'bridge-fails') await call('/api/cli/unexpected',{});
         const created = await call('/api/cli/relay-reservations',{action:'create'});
         const reserved = await call('/api/cli/relay-reservations',{action:'reserve',reservationId:created.reservationId});
         if (mode === 'cleanup-after-failure') await call('/api/cli/unexpected',{});
         log({name:'model-work',backend:process.env.LIVE_AGENT_BACKEND});
         if (!['no-upload','cleanup-network'].includes(mode)) await call('/api/cli/checks/local',{
-          reservationId:created.reservationId,checkId:created.checkId,projectId:created.projectId,findings:[]});
-        const text = mode === 'no-summary' ? '' : 'No findings.\\nFull results: https://app.counterfactlabs.com/projects/project-1/findings\\n';
+          reservationId:created.reservationId,checkId:created.checkId,projectId:created.projectId,findings});
+        const text = (mode==='coverage-present'?'Checked: system_prompt.md'+String.fromCharCode(10):'') + (mode === 'no-summary' ? '' : 'No findings.\\nFull results: https://app.counterfactlabs.com/projects/project-1/findings\\n');
         send({jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text}],isError:mode==='tool-error',
-          structuredContent:{text,exitCode:0,url:'https://app.counterfactlabs.com/projects/project-1/findings',analysisId:'analysis-1',projectId:'project-1',findings:[]}}});
+          structuredContent:{text,...(mode.startsWith('coverage-')?{coverage:mode==='coverage-present'?{filesAnalyzed:1}:null}:{}),exitCode:0,url:'https://app.counterfactlabs.com/projects/project-1/findings',analysisId:'analysis-1',projectId:'project-1',findings:[]}}});
       } catch { send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:[{type:'text',text:'Analysis refused'}],structuredContent:{exitCode:1,text:'Analysis refused'}}}); }
     }
   });
@@ -68,7 +99,7 @@ if (name === 'npx') {
   if (args[1] === 'install') {
     const p=path.join(process.env.HOME,'.claude/plugins/cache/counterfact-labs/counterfact/9.8.7');
     fs.mkdirSync(p,{recursive:true});
-    fs.writeFileSync(path.join(p,'.mcp.json'),JSON.stringify({mcpServers:{counterfact:{command:'npx',args:['-y','@counterfact-labs/cli@9.8.7','mcp']}}}));
+    fs.writeFileSync(path.join(p,'.mcp.json'),JSON.stringify({mcpServers:{counterfact:{command:'npx',args:mode==='plugin-config-changed'?['--yes','@counterfact-labs/cli@9.8.7','mcp']:['-y','@counterfact-labs/cli@9.8.7','mcp']}}}));
     fs.writeFileSync(path.join(process.env.HOME,'.claude/plugins/installed_plugins.json'),JSON.stringify({version:2,plugins:{'counterfact@counterfact-labs':[{installPath:p,version:'9.8.7',scope:'user'}]}}));
   }
 } else {
@@ -91,7 +122,8 @@ if (name === 'npx') {
   const write = q=>child.stdin.write(JSON.stringify({jsonrpc:'2.0',...q})+'\\n');
   createInterface({input:child.stdout}).on('line',line=>{
     const r=JSON.parse(line);
-    if (r.id===1) {write({method:'notifications/initialized'});write({id:2,method:'tools/call',params:{name:mode.startsWith('disallowed-')?mode.slice('disallowed-'.length):'analyze_agent',arguments:{path:process.cwd()}}});}
+    if (r.id===1) {write({method:'notifications/initialized'});write({id:4,method:'tools/list'});}
+    else if(r.id===4) {write({id:2,method:'tools/call',params:{name:mode.startsWith('disallowed-')?mode.slice('disallowed-'.length):'analyze_agent',arguments:{path:process.cwd()}}});}
     else if (r.id===2) {
       if (mode==='bridge-fails') {setInterval(()=>{},1000);return;}
       if (mode==='duplicate') {write({id:3,method:'tools/call',params:{name:'analyze_agent',arguments:{path:process.cwd()}}});return;}
@@ -120,6 +152,7 @@ const reserveReply=${reserveReply.toString()};
 let count=0;
 globalThis.fetch=async (input,options={})=>{
   const url=String(input);
+  if (!url.startsWith('http://127.0.0.1:') && !url.startsWith('https://app.counterfactlabs.com/')) return {status:200,url};
   if (!url.startsWith('https://app.counterfactlabs.com/')) return original(input,options);
   const headers=new Headers(options.headers);
   if(headers.get('authorization')!=='Bearer fictional-live-key') throw Error('wrong runtime sign-in');
@@ -146,7 +179,7 @@ globalThis.fetch=async (input,options={})=>{
     }
     result={reservationId:body.reservationId,state:'closed',settlement:'released'};
   }
-  else if(url.endsWith('/checks/local'))result={checkId:body.checkId,projectId:body.projectId,analysisId:'analysis-1',findingIds:[],settlement:'charged'};
+  else if(url.endsWith('/checks/local'))result={checkId:body.checkId,projectId:body.projectId,analysisId:'analysis-1',findingIds:process.env.FAKE_MODE==='dropped-findings'?[]:(body.findings??[]).map((_,i)=>'finding-'+i),settlement:'charged'};
   else result={mode:'local',minimumLocalCliVersion:'0.2.9'};
   return Response.json(result);
 };
@@ -168,16 +201,16 @@ async function run(t, args = ['run', '--confirm-paid'], mode = 'ok', key = 'fict
   }
   const loader = join(root, 'upstream.mjs'); writeFileSync(loader,upstream);
   const env={...process.env,PATH:emptyPath ? ':'+bin : bin+':'+process.env.PATH,FAKE_LOG:log,FAKE_MODE:mode,
-    NODE_OPTIONS:'--import='+loader,COUNTERFACT_LIVE_TEST_KEY:key,TMPDIR:root,
+    NODE_OPTIONS:'--import='+loader,COUNTERFACT_LIVE_TEST_KEY:key,TMPDIR:root,GITHUB_STEP_SUMMARY:join(root,'summary.md'),
     CODEX_HOME:join(root,'original-codex'),CLAUDE_CONFIG_DIR:join(root,'original-claude'),
     CF_CONSOLE_URL:'https://do-not-use.invalid',COUNTERFACT_URL:'https://do-not-use.invalid',
     ANTHROPIC_API_KEY:'fictional-provider-key',CODEX_API_KEY:'fictional-provider-key'};
   const started=Date.now();
-  const child=spawn('bash',[script,...args,...(agentDir ? ['--agent-dir',agentDir] : [])],{env,cwd:root,detached:true,stdio:['ignore','pipe','pipe']});
+  const child=spawn(process.execPath,[script,...args,...(agentDir ? ['--agent-dir',agentDir] : [])],{env,cwd:root,detached:true,stdio:['ignore','pipe','pipe']});
   let stdout='',stderr='';child.stdout.on('data',s=>stdout+=s);child.stderr.on('data',s=>stderr+=s);
   const kill=()=>{try{process.kill(-child.pid,'SIGKILL');}catch{ /* Already exited. */ }};
   t.after(kill);
-  const timer=setTimeout(kill,mode==='duplicate'||mode==='bridge-fails'?4000:15000);
+  const timer=setTimeout(kill,45000);
   const status=await new Promise(resolve=>child.on('close',resolve));clearTimeout(timer);
   const calls=readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(s=>JSON.parse(s));
   return {status,stdout,stderr,calls,root,duration:Date.now()-started};
@@ -201,8 +234,8 @@ test('custom agent directory is previewed and copied independently for both prov
   const r=await run(t,undefined,'ok','fictional-live-key',false,source);
   assert.equal(r.status,0,r.stdout+r.stderr);
   const agents=r.calls.filter(c=>c.name==='claude'&&c.args.includes('-p')||c.name==='codex');
-  assert.equal(agents.length,2);
-  for(const agent of agents)assert.equal(agent.prompt,prompt);
+  assert.equal(agents.length,8);
+  for(const agent of agents.filter(a=>a.cwd.includes('/clean/')))assert.equal(agent.prompt,prompt);
   assert.equal(readFileSync(join(source,'system_prompt.md'),'utf8'),prompt);
 });
 
@@ -242,13 +275,13 @@ test('both released integrations complete with isolated homes, real MCP evidence
   assert.match(r.stdout,/\$1\.00/);assert.match(r.stdout,/\$0\.04/);assert.match(r.stdout,/duration|[0-9.]+s/);
   assert.match(r.stdout,/charged \(equals estimate\) \$1\.00/);
   assert.match(r.stdout,/https:\/\/app\.counterfactlabs\.com\/projects\/project-1\/findings/);
-  const agents=r.calls.filter(c=>c.name==='claude'&&c.args.includes('-p')||c.name==='codex');assert.equal(agents.length,2);
-  assert.notEqual(agents[0].home,agents[1].home);
+  const agents=r.calls.filter(c=>c.name==='claude'&&c.args.includes('-p')||c.name==='codex');assert.equal(agents.length,8);
+  assert.notEqual(agents[0].home,agents[4].home);
   for(const a of agents){assert.equal(a.keyPresent,false);assert.ok(a.cwd.startsWith(a.home.slice(0,a.home.lastIndexOf('/'))));assert.equal(existsSync(a.home),false);assert.equal(existsSync(a.cwd),false);}
-  assert.deepEqual(r.calls.filter(c=>c.name==='npx').map(c=>c.args),[['-y','@counterfact-labs/cli@9.8.7','mcp'],['-y','@counterfact-labs/cli@latest','mcp']]);
+  assert.equal(r.calls.filter(c=>c.name==='npx'&&c.args.at(-1)==='mcp').length,10);
   assert.equal(readFileSync(fixtureSource,'utf8'),before);
   assert.ok(!r.stdout.includes('fictional-live-key')&&!r.stderr.includes('fictional-live-key'));
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,2);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
 });
 
 test('headless Codex receives MCP approval in its counterfact server config',async t=>{
@@ -270,31 +303,31 @@ test('null price with a valid provider budget fails as an unpriced test account 
     assert.ok(row?.endsWith('Analysis reservation priceMicro is unavailable; the test account is not on a priced plan'),r.stdout);
   }
   assert.equal(r.calls.filter(c=>c.name==='model-work').length,0);
-  assert.equal(r.calls.filter(c=>c.name==='console'&&c.action==='fail').length,2);
+  assert.equal(r.calls.filter(c=>c.name==='console'&&c.action==='fail').length,8);
   assert.doesNotMatch(r.stdout+r.stderr,/fictional-live-key|fictional-capability/);
 });
 
-test('two Personal prices fit the shared five dollar cap regardless of provider budgets',async t=>{
+test('eight Personal prices fit the shared twenty dollar cap regardless of provider budgets',async t=>{
   const r=await run(t,undefined,'priced-personal');
   assert.equal(r.status,0,r.stdout+r.stderr);
-  assert.match(r.stdout,/total Counterfact cap \$5\.00/);
-  assert.equal(r.stdout.match(/estimate \$1\.99; charged \(equals estimate\) \$1\.99/g)?.length,2);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,2);
+  assert.match(r.stdout,/total Counterfact cap \$20\.00/);
+  assert.equal(r.stdout.match(/estimate \$1\.99; charged \(equals estimate\) \$1\.99/g)?.length,8);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
   assert.doesNotMatch(r.stdout,/workspace allowance|provider budget/);
 });
 
 test('free Personal reservations count their zero price rather than the provider budget',async t=>{
   const r=await run(t,['run','--confirm-paid','--max-dollars','0.000001'],'free-personal');
   assert.equal(r.status,0,r.stdout+r.stderr);
-  assert.equal(r.stdout.match(/estimate \$0\.00; charged \(equals estimate\) \$0\.00/g)?.length,2);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,2);
+  assert.equal(r.stdout.match(/estimate \$0\.00; charged \(equals estimate\) \$0\.00/g)?.length,8);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
 });
 
 for(const mode of ['over-cap','unknown-price','total-cap'])test('withholds model work and releases the hold for '+mode,async t=>{
   const r=await run(t,undefined,mode);assert.notEqual(r.status,0,r.stdout);assert.match(r.stdout,/FAIL/);
   assert.match(r.stdout,mode==='unknown-price'?/Analysis reservation priceMicro is unavailable; the test account is not on a priced plan/
-    :/Total analysis priceMicro exceeds the cap/);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode.endsWith('total-cap')?1:0);
+    :mode==='over-cap'?/Per-analysis priceMicro exceeds the \$5 cap/:/Total analysis priceMicro exceeds the cap/);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode.endsWith('total-cap')?6:0);
   assert.ok(r.calls.some(c=>c.name==='console'&&c.action==='fail'));
 });
 
@@ -369,7 +402,7 @@ for(const mode of ['refused-status','refused-settlement','refused-network','refu
       if(mode==='cleanup-after-failure')assert.match(row,/Unexpected console endpoint/);
     }
     assert.ok(r.calls.some(c=>c.name==='codex'),'Codex must actually run');
-    assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode==='cleanup-network'?2:0);
+    assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode==='cleanup-network'?8:0);
     assert.ok(!r.stdout.includes('fictional-live-key')&&!r.stderr.includes('fictional-live-key'));
   });
 }
@@ -391,7 +424,7 @@ for(const [mode,reason] of [
   assert.match(r.stdout,/FAIL.*Claude/);assert.match(r.stdout,/Codex/);
   assert.match(r.stdout.split('\n').find(line=>/FAIL.*Claude/.test(line)),reason);
   assert.ok(r.calls.some(c=>c.name==='codex'),'Codex must actually run');
-  if(mode==='duplicate'||mode==='bridge-fails')assert.ok(r.duration<3000,'guard failure must finish within three seconds');
+  if(mode==='duplicate'||mode==='bridge-fails')assert.ok(r.duration<7000,'eight guard failures must finish within seven seconds');
 });
 
 test('empty PATH entries cannot select an executable from the current directory',async t=>{
@@ -424,5 +457,207 @@ test('adapter replies with a JSON-RPC error for a duplicate analysis and exits w
 test('bounds headless runs and removes isolated directories after timeout',async t=>{
   const r=await run(t,['run','--confirm-paid','--timeout-seconds','1'],'hang');
   assert.notEqual(r.status,0);assert.match(r.stdout,/timed out/i);
-  for(const c of r.calls)assert.equal(existsSync(c.home),false);
+  for(const c of r.calls.filter(c=>c.home))assert.equal(existsSync(c.home),false);
+});
+
+test('each analysis also obeys the five dollar ceiling when the run still has twenty dollars',async t=>{
+  const original=globalThis.fetch;
+  const budget={used:0,cap:20000000};
+  const bridge=await startBridge({key:'fictional-live-key',budget,folder:resolve(fixtureDir)});
+  t.after(()=>bridge.close());
+  let released=false;
+  t.mock.method(globalThis,'fetch',async(input,options)=>{
+    if(!String(input).startsWith('https://app.counterfactlabs.com/'))return original(input,options);
+    const body=JSON.parse(options.body);
+    if(body.action==='reserve')return Response.json(reserveReply({priceMicro:5000001}));
+    released=true;return Response.json({settlement:'released'});
+  });
+  const post=(path,body)=>fetch(bridge.url+path,{method:'POST',headers:{'x-live-agent-token':bridge.token},body:JSON.stringify(body)});
+  await post('/begin',{path:'.'});
+  const response=await post('/console/api/cli/relay-reservations',{action:'reserve',reservationId:'reservation-1'});
+  assert.equal(response.status,403);
+  assert.match((await response.json()).error,/Per-analysis.*cap/);
+  assert.equal(budget.used,0);assert.equal(released,true);
+});
+
+test('free probes withhold the real capability, release a reservation and never spend the run budget',async t=>{
+  const original=globalThis.fetch;
+  const actions=[];
+  t.mock.method(globalThis,'fetch',async(input,options)=>{
+    if(!String(input).startsWith('https://app.counterfactlabs.com/'))return original(input,options);
+    const body=JSON.parse(options.body);actions.push(body.action);
+    return Response.json(body.action==='reserve'?reserveReply():{settlement:'released'});
+  });
+  const budget={used:0,cap:20000000};
+  const bridge=await startBridge({key:'fictional-live-key',budget,folder:resolve(fixtureDir),free:true});
+  t.after(()=>bridge.close());
+  const post=(path,body)=>fetch(bridge.url+path,{method:'POST',headers:{'x-live-agent-token':bridge.token},body:JSON.stringify(body)});
+  // /begin prevents the old paid guard from masquerading as a free-mode guard.
+  await post('/begin',{path:'.'});
+  const response=await post('/console/api/cli/relay-reservations',{action:'reserve',reservationId:'reservation-1'});
+  assert.equal(response.status,200);
+  const value=await response.json();
+  assert.equal(value.priceMicro,1000000);
+  assert.notEqual(value.reservationToken,'fictional-capability');
+  assert.equal(typeof value.reservationToken,'string');
+  assert.equal(budget.used,0);
+  const released=await post('/console/api/cli/relay-reservations',{action:'fail',reservationId:'reservation-1'});
+  assert.equal(released.status,200);assert.equal(bridge.state.reservations.size,0);
+  assert.deepEqual(actions,['reserve','fail']);
+  assert.deepEqual(bridge.state.failures,[]);
+});
+
+for(const [mode,missed] of [['miss-authority','planted-authority: no finding cited system_prompt.md:6'],['miss-credential','planted-credential: no finding cited system_prompt.md:12'],['miss-description','tools-agent: no finding cited tools.json:5'],['miss-code','tools-agent: no finding cited tools.js:3']])test('suite catches '+mode+' in both backends while completing the matrix',async t=>{
+  const r=await run(t,undefined,mode);
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  for(const name of ['Claude','Codex'])assert.ok(r.stdout.includes('FAIL '+name+' | '+missed.split(':')[0]),r.stdout);
+  assert.ok(r.stdout.includes(missed),r.stdout);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+});
+test('all eight analyses produce rows and the job summary; free startup uses the plugin pin under the CLI package name',async t=>{
+  const r=await run(t);
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.equal(r.stdout.split('\n').filter(line=>/^PASS (Claude|Codex) \| (clean|planted-authority|planted-credential|tools-agent) \|/.test(line)).length,8,r.stdout);
+  const starts=r.calls.filter(c=>c.name==='npx'&&c.cwd.endsWith('package-shadow'));
+  assert.deepEqual(starts.map(c=>c.args),[['-y','@counterfact-labs/cli@9.8.7','mcp'],['-y','@counterfact-labs/cli@9.8.7','--help'],['-y','@counterfact-labs/cli@9.8.7','analyze','--help'],['-y','@counterfact-labs/cli@latest','mcp'],['-y','@counterfact-labs/cli@latest','--help'],['-y','@counterfact-labs/cli@latest','analyze','--help']]);
+  const summary=readFileSync(join(r.root,'summary.md'),'utf8');
+  assert.match(summary,/\| Agent \| Case \| Result \| Reason \|/);
+  assert.equal(summary.split('\n').filter(line=>/^\| (Claude|Codex) \| (clean|planted-authority|planted-credential|tools-agent) \|/.test(line)).length,8);
+  assert.match(r.stdout,/SKIP: --max-dollars not yet available/);
+});
+for(const mode of ['coverage-missing','coverage-present'])test('suite '+mode+' follows the tested CLI capability',async t=>{
+  const r=await run(t,undefined,mode);
+  assert.equal(r.status,mode==='coverage-missing'?1:0,r.stdout+r.stderr);
+  assert.match(r.stdout,mode==='coverage-missing'?/clean: CLI reports coverage support/:/coverage present/);
+});
+test('sign-in free probe fails a signed-out integration without attempting sign in',async t=>{
+  const r=await run(t,undefined,'signed-out');
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  assert.match(r.stdout,/FAIL Claude \| sign-in/);
+  assert.match(r.stdout,/FAIL Codex \| sign-in/);
+});
+test('the local run cap cannot exceed twenty dollars',async t=>{
+  const r=await run(t,['check','--max-dollars','20.000001']);
+  assert.equal(r.status,1);assert.match(r.stderr,/20/);assert.deepEqual(r.calls,[]);
+});
+test('an upload receipt cannot turn rejected planted findings into passing evidence',async t=>{
+  const r=await run(t,undefined,'dropped-findings');
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  assert.match(r.stdout,/FAIL Claude \| planted-authority/);
+  assert.match(r.stdout,/Invalid console upload receipt/);
+});
+for(const mode of ['cap-supported','cap-unsafe'])test('free '+mode+' runs a real terminal cap probe through the protected bridge',async t=>{
+  const r=await run(t,undefined,mode);
+  assert.equal(r.status,mode==='cap-supported'?0:1,r.stdout+r.stderr);
+  assert.match(r.stdout,new RegExp((mode==='cap-supported'?'PASS':'FAIL')+' Claude \\| over-cap refusal'));
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+  const holds=r.calls.filter(c=>c.name==='cap-reservation');
+  assert.equal(holds.length,2);
+  assert.ok(holds.every(c=>typeof c.token==='string'&&c.token!=='fictional-capability'));
+  assert.equal(r.calls.filter(c=>c.name==='console'&&c.action==='fail').length,2);
+});
+test('failed planted assertions retain the paid receipt, cost and saved findings URL',async t=>{
+  const r=await run(t,undefined,'miss-authority');
+  const line=r.stdout.split('\n').find(line=>line.startsWith('FAIL Claude | planted-authority'));
+  assert.match(line??'',/estimate \$1\.00; charged \(equals estimate\) \$1\.00/);
+  const summary=readFileSync(join(r.root,'summary.md'),'utf8');
+  assert.match(summary,/\| Claude \| planted-authority \| FAIL \|.*https:\/\/app.counterfactlabs.com\/projects\/project-1\/findings/);
+});
+test('one case cannot obtain a second reservation after uploading its first result',async t=>{
+  const original=globalThis.fetch;let reserves=0;
+  t.mock.method(globalThis,'fetch',async(input,options)=>{
+    if(!String(input).startsWith('https://app.counterfactlabs.com/'))return original(input,options);
+    const body=JSON.parse(options.body);
+    if(body.action==='reserve'){reserves++;return Response.json(reserveReply());}
+    return Response.json({checkId:'check-1',projectId:'project-1',analysisId:'analysis-1',findingIds:[],settlement:'charged'});
+  });
+  const bridge=await startBridge({key:'fictional-live-key',budget:{used:0,cap:20000000},folder:resolve(fixtureDir)});
+  t.after(()=>bridge.close());
+  const post=(path,body)=>fetch(bridge.url+path,{method:'POST',headers:{'x-live-agent-token':bridge.token},body:JSON.stringify(body)});
+  await post('/begin',{path:'.'});
+  await post('/console/api/cli/relay-reservations',{action:'reserve',reservationId:'reservation-1'});
+  await post('/console/api/cli/checks/local',{reservationId:'reservation-1',projectId:'project-1',checkId:'check-1',findings:[]});
+  const response=await post('/console/api/cli/relay-reservations',{action:'reserve',reservationId:'reservation-1'});
+  assert.equal(response.status,502);assert.equal(reserves,1);
+});
+
+test('a free-probe configuration failure records a row without skipping any paid cases',async t=>{
+  const r=await run(t,undefined,'plugin-config-changed');
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  assert.match(r.stdout,/FAIL Claude \| free probes \| Installed plugin MCP configuration unavailable/);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+  assert.equal(r.stdout.split('\n').filter(line=>/^PASS (Claude|Codex) \| (clean|planted-authority|planted-credential|tools-agent) \|/.test(line)).length,8);
+});
+test('free sign-in failures report bridge refusals and keep paid cases running',async t=>{
+  const r=await run(t,undefined,'free-bridge-refusal');
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  assert.match(r.stdout,/FAIL Claude \| sign-in \| .*Free probe attempted a paid operation/);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+});
+test('free bridge blocks uploads and additional holds and releases abandoned holds',async t=>{
+  const original=globalThis.fetch,actions=[];
+  t.mock.method(globalThis,'fetch',async(input,options)=>{
+    if(!String(input).startsWith('https://app.counterfactlabs.com/'))return original(input,options);
+    const body=JSON.parse(options.body);actions.push(body.action);
+    return Response.json(body.action==='reserve'?reserveReply():{settlement:'released'});
+  });
+  const bridge=await startBridge({key:'fictional-live-key',budget:{used:0,cap:20000000},folder:resolve(fixtureDir),free:true});
+  t.after(()=>bridge.close());
+  const post=(path,body)=>fetch(bridge.url+path,{method:'POST',headers:{'x-live-agent-token':bridge.token},body:JSON.stringify(body)});
+  assert.equal((await post('/console/api/cli/relay-reservations',{action:'reserve',reservationId:'reservation-1'})).status,200);
+  assert.equal((await post('/console/api/cli/relay-reservations',{action:'reserve',reservationId:'reservation-2'})).status,502);
+  assert.equal((await post('/console/api/cli/checks/local',{reservationId:'reservation-1',findings:[]})).status,502);
+  await bridge.close();
+  assert.deepEqual(actions,['reserve','fail']);
+});
+
+for(const mode of ['low-balance','invalid-price'])test('free bridge permits a harmless release after '+mode,async t=>{
+  const original=globalThis.fetch,actions=[];
+  t.mock.method(globalThis,'fetch',async(input,options)=>{
+    if(!String(input).startsWith('https://app.counterfactlabs.com/'))return original(input,options);
+    const body=JSON.parse(options.body);actions.push(body.action);
+    if(body.action==='reserve')return mode==='low-balance'
+      ?Response.json({error:'Insufficient balance'},{status:402})
+      :Response.json(reserveReply({priceMicro:null}));
+    return Response.json({settlement:'unheld'});
+  });
+  const budget={used:0,cap:20000000};
+  const bridge=await startBridge({key:'fictional-live-key',budget,folder:resolve(fixtureDir),free:true});
+  t.after(()=>bridge.close());
+  const post=body=>fetch(bridge.url+'/console/api/cli/relay-reservations',{
+    method:'POST',headers:{'x-live-agent-token':bridge.token},body:JSON.stringify(body)});
+  assert.equal((await post({action:'reserve',reservationId:'reservation-1'})).status,mode==='low-balance'?402:403);
+  const released=await post({action:'fail',reservationId:'reservation-1'});
+  assert.equal(released.status,200);
+  assert.equal((await released.json()).settlement,'unheld');
+  assert.equal(bridge.state.reservations.size,0);assert.equal(budget.used,0);
+  assert.deepEqual(actions,mode==='low-balance'?['reserve','fail']:['reserve','fail','fail']);
+  assert.deepEqual(bridge.state.failures,mode==='low-balance'?[]:
+    ['Analysis reservation priceMicro is unavailable; the test account is not on a priced plan']);
+});
+
+test('real intake-shaped findings preserve primary and secondary citations with repeated saved IDs',async t=>{
+  const original=globalThis.fetch;
+  const payload=uploadPayload([
+    uploadFinding('system_prompt.md',6),
+    uploadFinding('system_prompt.md',6),
+    uploadFinding('tools.json',5,[{repo:'local:fictional-warehouse',path:'tools.js',line:3,excerpt:'Fictional source evidence'}]),
+  ]);
+  const ids=['saved-authority','saved-authority','saved-tools'];
+  t.mock.method(globalThis,'fetch',async(input,options)=>{
+    if(!String(input).startsWith('https://app.counterfactlabs.com/'))return original(input,options);
+    const body=JSON.parse(options.body);
+    return Response.json(body.action==='reserve'?reserveReply({reservationId:payload.reservationId,projectId:payload.projectId}):{
+      checkId:payload.checkId,projectId:payload.projectId,analysisId:'analysis-1',findingIds:ids,settlement:'charged'});
+  });
+  const bridge=await startBridge({key:'fictional-live-key',budget:{used:0,cap:20000000},folder:resolve(fixtureDir)});
+  t.after(()=>bridge.close());
+  const post=(path,body)=>fetch(bridge.url+path,{method:'POST',headers:{'x-live-agent-token':bridge.token},body:JSON.stringify(body)});
+  await post('/begin',{path:'.'});
+  await post('/console/api/cli/relay-reservations',{action:'reserve',reservationId:payload.reservationId});
+  const receipt=await post('/console/api/cli/checks/local',payload);
+  assert.equal(receipt.status,200);
+  const {assertCase}=await import('./live-agent-cases.mjs');
+  assert.match(assertCase('planted-authority',{findings:bridge.state.findings}).reason,/cited/);
+  assert.match(assertCase('tools-agent',{findings:bridge.state.findings}).reason,/cited/);
 });
