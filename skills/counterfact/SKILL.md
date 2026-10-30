@@ -1,7 +1,10 @@
 ---
-name: counterfact-analyze
-description: Suggest a Counterfact analysis after editing an agent's prompt, skills, or tool definitions, or help when the user asks to analyze an agent.
+name: counterfact
+description: Analyze an agent with Counterfact when asked, or suggest an analysis after editing an agent's prompt, skills, or tool definitions.
+argument-hint: [agent-folder]
 ---
+
+When the user runs `/counterfact:counterfact`, analyze the agent in `$ARGUMENTS`, or in the current folder when no path is supplied, starting with sign-in.
 
 After editing an agent's prompt, skills, or tool definitions, suggest an analysis and wait for the user to ask for it.
 
