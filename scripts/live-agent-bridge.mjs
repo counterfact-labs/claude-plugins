@@ -70,6 +70,7 @@ export async function startBridge({ key, budget, folder, free = false }) {
         if (state.attempts !== 1 || typeof body.path !== 'string' || resolve(folder, body.path) !== folder || body.paths) {
           throw fail('Only one analysis of the copied agent is allowed');
         }
+        state.proposal = body.proposal;
         reply(200, {}); return;
       }
       if (request.url === '/event') {

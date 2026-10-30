@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { startBridge } from './live-agent-bridge.mjs';
 import { uploadFinding, uploadPayload } from './live-agent-test-fixtures.mjs';
+import { credentialRefusalMessage, credentialProposalRefusalMessage } from './live-agent-cases.mjs';
 
 const script = fileURLToPath(new URL('./live-agent-check.mjs', import.meta.url));
 const fixtureDir = fileURLToPath(new URL('./fixtures/live-agent/', import.meta.url));
@@ -23,6 +24,8 @@ const name = path.basename(process.argv[1]);
 const args = process.argv.slice(2);
 const mode = process.env.FAKE_MODE;
 const uploadFinding = ${uploadFinding.toString()};
+const noAgentMessage = ${JSON.stringify(credentialRefusalMessage)};
+const proposalMessage = ${JSON.stringify(credentialProposalRefusalMessage)};
 const log = value => fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(value) + '\\n');
 log({name, args, home: process.env.HOME, cwd: process.cwd(), keyPresent: !!process.env.COUNTERFACT_LIVE_TEST_KEY,
   prompt: fs.existsSync('system_prompt.md') ? fs.readFileSync('system_prompt.md', 'utf8') : null,
@@ -51,7 +54,7 @@ if (name === 'npx') {
     const q = JSON.parse(line);
     if (!q.id) return;
     if (q.method === 'initialize') {
-      send({jsonrpc:'2.0',id:q.id,result:{serverInfo:{name:'counterfact-labs',version:args[1].split('@').at(-1)}}});
+      send({jsonrpc:'2.0',id:q.id,result:{serverInfo:{name:'counterfact-labs',version:args.find(a=>a.startsWith('@counterfact-labs/cli@')).split('@').at(-1)}}});
     } else if (q.method === 'tools/list') {
       send({jsonrpc:'2.0',id:q.id,result:{tools:[{name:'analyze_agent',description:'Analyze',inputSchema:{type:'object'}},{name:'sign_in_status',inputSchema:{type:'object'}}]}});
     } else if (q.method === 'tools/call') {
@@ -78,9 +81,20 @@ if (name === 'npx') {
         if(prompt.includes('follow their instructions'))findings=[uploadFinding('system_prompt.md',6)];
         if(prompt.includes('Support integration token:'))findings=[uploadFinding('system_prompt.md',12)];
         if(fs.existsSync('tools.json'))findings=[uploadFinding('tools.json',5),uploadFinding('tools.js',3)];
-        if(mode==='miss-authority'&&prompt.includes('follow their instructions')||mode==='miss-credential'&&prompt.includes('Support integration token:'))findings=[];
+        if(mode==='miss-authority'&&prompt.includes('follow their instructions'))findings=[];
         if(mode==='miss-description')findings=findings.filter(f=>f.site.path!=='tools.json');
         if(mode==='miss-code')findings=findings.filter(f=>f.site.path!=='tools.js');
+        if (mode!=='credential-admitted' && prompt.includes('Support integration token:') || mode==='no-agent-clean') {
+          if(mode==='credential-paid-refusal') {
+            const created=await call('/api/cli/relay-reservations',{action:'create'});
+            await call('/api/cli/relay-reservations',{action:'reserve',reservationId:created.reservationId});
+          }
+          const proposed=q.params.arguments.proposal!==undefined;
+          const proposalRefusal=mode==='credential-proposal-without-proposal'||proposed&&mode!=='credential-no-agent-with-proposal';
+          const text=mode==='credential-wrong-refusal'?'Analysis could not finish':proposalRefusal?proposalMessage:noAgentMessage;
+          send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:[{type:'text',text}],structuredContent:{text,exitCode:1,...(proposalRefusal?{}:{kind:'no_agent',candidates:[]}),reason:'request_failed'}}});
+          return;
+        }
         if (mode === 'bridge-fails') await call('/api/cli/unexpected',{});
         const created = await call('/api/cli/relay-reservations',{action:'create'});
         const reserved = await call('/api/cli/relay-reservations',{action:'reserve',reservationId:created.reservationId});
@@ -90,7 +104,7 @@ if (name === 'npx') {
           reservationId:created.reservationId,checkId:created.checkId,projectId:created.projectId,findings});
         const text = (mode==='coverage-present'?'Checked: system_prompt.md'+String.fromCharCode(10):'') + (mode === 'no-summary' ? '' : 'No findings.\\nFull results: https://app.counterfactlabs.com/projects/project-1/findings\\n');
         send({jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text}],isError:mode==='tool-error',
-          structuredContent:{text,...(mode.startsWith('coverage-')?{coverage:mode==='coverage-present'?{filesAnalyzed:1}:null}:{}),exitCode:0,url:'https://app.counterfactlabs.com/projects/project-1/findings',analysisId:'analysis-1',projectId:'project-1',findings:[]}}});
+          structuredContent:{text,...(mode.startsWith('coverage-')?{coverage:mode==='coverage-present'?{filesAnalyzed:1}:null}:{}),exitCode:0,url:'https://app.counterfactlabs.com/projects/project-1/findings',...(mode==='cli-029'||mode==='optional-mcp-ids'?{}:{analysisId:mode==='mismatched-analysis'?'other-analysis':'analysis-1',projectId:mode==='mismatched-project'?'other-project':'project-1'}),findings:[]}}});
       } catch { send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:[{type:'text',text:'Analysis refused'}],structuredContent:{exitCode:1,text:'Analysis refused'}}}); }
     }
   });
@@ -99,15 +113,18 @@ if (name === 'npx') {
   if (args[1] === 'install') {
     const p=path.join(process.env.HOME,'.claude/plugins/cache/counterfact-labs/counterfact/9.8.7');
     fs.mkdirSync(p,{recursive:true});
-    fs.writeFileSync(path.join(p,'.mcp.json'),JSON.stringify({mcpServers:{counterfact:{command:'npx',args:mode==='plugin-config-changed'?['--yes','@counterfact-labs/cli@9.8.7','mcp']:['-y','@counterfact-labs/cli@9.8.7','mcp']}}}));
+    fs.writeFileSync(path.join(p,'.mcp.json'),JSON.stringify({mcpServers:{counterfact:{command:'npx',args:mode==='plugin-config-changed'?['--yes','@counterfact-labs/cli@9.8.7','mcp']:['-y',...(['plugin-prefix','cli-029'].includes(mode)?['--prefix=\${CLAUDE_PLUGIN_ROOT}']:[]),'@counterfact-labs/cli@9.8.7','mcp']}}}));
     fs.writeFileSync(path.join(process.env.HOME,'.claude/plugins/installed_plugins.json'),JSON.stringify({version:2,plugins:{'counterfact@counterfact-labs':[{installPath:p,version:'9.8.7',scope:'user'}]}}));
   }
 } else {
   if (mode === 'hang') { setInterval(()=>{},1000); return; }
   if (mode === 'agent-fails' && name === 'claude') process.exit(3);
   const done = () => {
-    if (name === 'claude') send({type:'result',subtype:'success',is_error:false,result:'No findings. https://app.counterfactlabs.com/projects/project-1/findings',total_cost_usd:0.04});
-    else {send({type:'item.completed',item:{type:'agent_message',text:'No findings. https://app.counterfactlabs.com/projects/project-1/findings'}});send({type:'turn.completed',usage:{input_tokens:12,output_tokens:4}});}
+    const refused=mode!=='credential-admitted'&&fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')||mode==='no-agent-clean';
+    const finalText=refused?(mode==='credential-paraphrase'?'The prompt was skipped, so no analysis started.':noAgentMessage):'No findings. https://app.counterfactlabs.com/projects/project-1/findings';
+    const failed=refused&&mode==='credential-failed-turn';
+    if (name === 'claude') send({type:'result',subtype:failed?'error_during_execution':'success',is_error:failed,result:finalText,total_cost_usd:0.04});
+    else {send({type:'item.completed',item:{type:'agent_message',text:finalText}});send({type:failed?'turn.failed':'turn.completed',usage:{input_tokens:12,output_tokens:4}});}
   };
   if (mode === 'claims-only') {done();return;}
   if (name === 'claude') send({type:'system',subtype:'init',mcp_servers:[{name:'plugin:counterfact:counterfact',status:'connected'}],plugins:[{name:'counterfact'}]});
@@ -117,17 +134,18 @@ if (name === 'npx') {
     log({name:'codex-config',text:config});
     if (!config.includes(pin) || !config.includes('tool_timeout_sec = 900')) process.exit(7);
   }
-  const child=spawn('npx',['-y',pin,'mcp'],{stdio:['pipe','pipe','inherit']});
+  const launchArgs=name==='claude'&&['plugin-prefix','cli-029'].includes(mode)?['-y','--prefix='+path.join(process.env.HOME,'.claude/plugins/cache/counterfact-labs/counterfact/9.8.7'),pin,'mcp']:['-y',pin,'mcp'];
+  const child=spawn('npx',launchArgs,{stdio:['pipe','pipe','inherit']});
   child.on('error',()=>process.exit(8));
   const write = q=>child.stdin.write(JSON.stringify({jsonrpc:'2.0',...q})+'\\n');
   createInterface({input:child.stdout}).on('line',line=>{
     const r=JSON.parse(line);
     if (r.id===1) {write({method:'notifications/initialized'});write({id:4,method:'tools/list'});}
-    else if(r.id===4) {write({id:2,method:'tools/call',params:{name:mode.startsWith('disallowed-')?mode.slice('disallowed-'.length):'analyze_agent',arguments:{path:process.cwd()}}});}
+    else if(r.id===4) {write({id:2,method:'tools/call',params:{name:mode.startsWith('disallowed-')?mode.slice('disallowed-'.length):'analyze_agent',arguments:{path:process.cwd(),...(name==='claude'?{proposal:{agentName:'Paper shop assistant',files:[{path:mode==='credential-invalid-proposal'?'../outside.md':mode==='credential-unrelated-proposal'?'other.md':mode==='credential-relative-proposal'?'./system_prompt.md':'system_prompt.md',role:'prompt'}]}}:{})}}});}
     else if (r.id===2) {
-      if (mode==='bridge-fails') {setInterval(()=>{},1000);return;}
+      if (mode==='bridge-fails'&&!fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')) {setInterval(()=>{},1000);return;}
       if (mode==='duplicate') {write({id:3,method:'tools/call',params:{name:'analyze_agent',arguments:{path:process.cwd()}}});return;}
-      if(name==='codex')send({type:'item.completed',item:{type:'mcp_tool_call',server:'counterfact',tool:'analyze_agent',status:'completed',result:r.result}});
+      if(name==='codex'&&!(mode==='credential-no-tool-event'&&fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')))send({type:'item.completed',item:{type:'mcp_tool_call',server:'counterfact',tool:'analyze_agent',status:'completed',result:r.result}});
       child.stdin.end();done();
     } else if(r.id===3){child.stdin.end();done();}
   });
@@ -152,7 +170,7 @@ const reserveReply=${reserveReply.toString()};
 let count=0;
 globalThis.fetch=async (input,options={})=>{
   const url=String(input);
-  if (!url.startsWith('http://127.0.0.1:') && !url.startsWith('https://app.counterfactlabs.com/')) return {status:200,url};
+  if (!url.startsWith('http://127.0.0.1:') && !url.startsWith('https://app.counterfactlabs.com/')) return {status:process.env.FAKE_MODE==='cli-029'&&url==='https://www.npmjs.com/package/@counterfact-labs/cli'?403:200,url};
   if (!url.startsWith('https://app.counterfactlabs.com/')) return original(input,options);
   const headers=new Headers(options.headers);
   if(headers.get('authorization')!=='Bearer fictional-live-key') throw Error('wrong runtime sign-in');
@@ -164,7 +182,7 @@ globalThis.fetch=async (input,options={})=>{
   else if(body.action==='reserve') {
     const mode=process.env.FAKE_MODE;
     result=reserveReply({reservationId:body.reservationId,checkId:'check-'+count,
-      priceMicro:['unpriced-plan','unknown-price','invalid-release-network'].includes(mode)?null:mode==='free-personal'?0:mode==='priced-personal'?1990000:mode==='over-cap'||mode.startsWith('refused-')?6000000:mode==='total-cap'?3000000:1000000,
+      priceMicro:['unpriced-plan','unknown-price','invalid-release-network'].includes(mode)?null:mode==='free-personal'?0:mode==='priced-personal'?1990000:mode==='over-cap'||mode.startsWith('refused-')?6000000:mode==='total-cap'?4000000:1000000,
       providerBudgetMicro:['unknown-price','invalid-release-network'].includes(mode)?null:mode==='free-personal'||mode==='priced-personal'?25000000:2000000});
   }
   else if(body.action==='fail') {
@@ -281,7 +299,7 @@ test('both released integrations complete with isolated homes, real MCP evidence
   assert.equal(r.calls.filter(c=>c.name==='npx'&&c.args.at(-1)==='mcp').length,10);
   assert.equal(readFileSync(fixtureSource,'utf8'),before);
   assert.ok(!r.stdout.includes('fictional-live-key')&&!r.stderr.includes('fictional-live-key'));
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
 });
 
 test('headless Codex receives MCP approval in its counterfact server config',async t=>{
@@ -303,31 +321,31 @@ test('null price with a valid provider budget fails as an unpriced test account 
     assert.ok(row?.endsWith('Analysis reservation priceMicro is unavailable; the test account is not on a priced plan'),r.stdout);
   }
   assert.equal(r.calls.filter(c=>c.name==='model-work').length,0);
-  assert.equal(r.calls.filter(c=>c.name==='console'&&c.action==='fail').length,8);
+  assert.equal(r.calls.filter(c=>c.name==='console'&&c.action==='fail').length,6);
   assert.doesNotMatch(r.stdout+r.stderr,/fictional-live-key|fictional-capability/);
 });
 
-test('eight Personal prices fit the shared twenty dollar cap regardless of provider budgets',async t=>{
+test('six Personal prices fit the shared twenty dollar cap regardless of provider budgets',async t=>{
   const r=await run(t,undefined,'priced-personal');
   assert.equal(r.status,0,r.stdout+r.stderr);
   assert.match(r.stdout,/total Counterfact cap \$20\.00/);
-  assert.equal(r.stdout.match(/estimate \$1\.99; charged \(equals estimate\) \$1\.99/g)?.length,8);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+  assert.equal(r.stdout.match(/estimate \$1\.99; charged \(equals estimate\) \$1\.99/g)?.length,6);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
   assert.doesNotMatch(r.stdout,/workspace allowance|provider budget/);
 });
 
 test('free Personal reservations count their zero price rather than the provider budget',async t=>{
   const r=await run(t,['run','--confirm-paid','--max-dollars','0.000001'],'free-personal');
   assert.equal(r.status,0,r.stdout+r.stderr);
-  assert.equal(r.stdout.match(/estimate \$0\.00; charged \(equals estimate\) \$0\.00/g)?.length,8);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+  assert.equal(r.stdout.match(/estimate \$0\.00; charged \(equals estimate\) \$0\.00/g)?.length,6);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
 });
 
 for(const mode of ['over-cap','unknown-price','total-cap'])test('withholds model work and releases the hold for '+mode,async t=>{
   const r=await run(t,undefined,mode);assert.notEqual(r.status,0,r.stdout);assert.match(r.stdout,/FAIL/);
   assert.match(r.stdout,mode==='unknown-price'?/Analysis reservation priceMicro is unavailable; the test account is not on a priced plan/
     :mode==='over-cap'?/Per-analysis priceMicro exceeds the \$5 cap/:/Total analysis priceMicro exceeds the cap/);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode.endsWith('total-cap')?6:0);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode.endsWith('total-cap')?5:0);
   assert.ok(r.calls.some(c=>c.name==='console'&&c.action==='fail'));
 });
 
@@ -402,7 +420,7 @@ for(const mode of ['refused-status','refused-settlement','refused-network','refu
       if(mode==='cleanup-after-failure')assert.match(row,/Unexpected console endpoint/);
     }
     assert.ok(r.calls.some(c=>c.name==='codex'),'Codex must actually run');
-    assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode==='cleanup-network'?8:0);
+    assert.equal(r.calls.filter(c=>c.name==='model-work').length,mode==='cleanup-network'?6:0);
     assert.ok(!r.stdout.includes('fictional-live-key')&&!r.stderr.includes('fictional-live-key'));
   });
 }
@@ -507,14 +525,14 @@ test('free probes withhold the real capability, release a reservation and never 
   assert.deepEqual(bridge.state.failures,[]);
 });
 
-for(const [mode,missed] of [['miss-authority','planted-authority: no finding cited system_prompt.md:6'],['miss-credential','planted-credential: no finding cited system_prompt.md:12'],['miss-description','tools-agent: no finding cited tools.json:5'],['miss-code','tools-agent: no finding cited tools.js:3']])test('suite catches '+mode+' in both backends while completing the matrix',async t=>{
+for(const [mode,missed] of [['miss-authority','planted-authority: no finding cited system_prompt.md:6'],['miss-description','tools-agent: no finding cited tools.json:5'],['miss-code','tools-agent: no finding cited tools.js:3']])test('suite catches '+mode+' in both backends while completing the matrix',async t=>{
   const r=await run(t,undefined,mode);
   assert.equal(r.status,1,r.stdout+r.stderr);
   for(const name of ['Claude','Codex'])assert.ok(r.stdout.includes('FAIL '+name+' | '+missed.split(':')[0]),r.stdout);
   assert.ok(r.stdout.includes(missed),r.stdout);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
 });
-test('all eight analyses produce rows and the job summary; free startup uses the plugin pin under the CLI package name',async t=>{
+test('all eight cases produce rows and the job summary; free startup uses the plugin pin under the CLI package name',async t=>{
   const r=await run(t);
   assert.equal(r.status,0,r.stdout+r.stderr);
   assert.equal(r.stdout.split('\n').filter(line=>/^PASS (Claude|Codex) \| (clean|planted-authority|planted-credential|tools-agent) \|/.test(line)).length,8,r.stdout);
@@ -550,7 +568,7 @@ for(const mode of ['cap-supported','cap-unsafe'])test('free '+mode+' runs a real
   const r=await run(t,undefined,mode);
   assert.equal(r.status,mode==='cap-supported'?0:1,r.stdout+r.stderr);
   assert.match(r.stdout,new RegExp((mode==='cap-supported'?'PASS':'FAIL')+' Claude \\| over-cap refusal'));
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
   const holds=r.calls.filter(c=>c.name==='cap-reservation');
   assert.equal(holds.length,2);
   assert.ok(holds.every(c=>typeof c.token==='string'&&c.token!=='fictional-capability'));
@@ -585,14 +603,14 @@ test('a free-probe configuration failure records a row without skipping any paid
   const r=await run(t,undefined,'plugin-config-changed');
   assert.equal(r.status,1,r.stdout+r.stderr);
   assert.match(r.stdout,/FAIL Claude \| free probes \| Installed plugin MCP configuration unavailable/);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
   assert.equal(r.stdout.split('\n').filter(line=>/^PASS (Claude|Codex) \| (clean|planted-authority|planted-credential|tools-agent) \|/.test(line)).length,8);
 });
 test('free sign-in failures report bridge refusals and keep paid cases running',async t=>{
   const r=await run(t,undefined,'free-bridge-refusal');
   assert.equal(r.status,1,r.stdout+r.stderr);
   assert.match(r.stdout,/FAIL Claude \| sign-in \| .*Free probe attempted a paid operation/);
-  assert.equal(r.calls.filter(c=>c.name==='model-work').length,8);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
 });
 test('free bridge blocks uploads and additional holds and releases abandoned holds',async t=>{
   const original=globalThis.fetch,actions=[];
@@ -660,4 +678,71 @@ test('real intake-shaped findings preserve primary and secondary citations with 
   const {assertCase}=await import('./live-agent-cases.mjs');
   assert.match(assertCase('planted-authority',{findings:bridge.state.findings}).reason,/cited/);
   assert.match(assertCase('tools-agent',{findings:bridge.state.findings}).reason,/cited/);
+});
+
+
+test('successful uploads match MCP replies that omit optional analysis and project IDs',async t=>{
+  const r=await run(t,undefined,'optional-mcp-ids');
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.equal(r.stdout.match(/charged \(equals estimate\) \$1\.00/g)?.length,6);
+});
+test('Claude free startup forwards the installed plugin prefix and exact pin',async t=>{
+  const r=await run(t,undefined,'plugin-prefix');
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  const startup=r.calls.find(c=>c.name==='npx'&&c.cwd.endsWith('package-shadow'));
+  assert.deepEqual(startup?.args,['-y','--prefix='+join(startup.home,'.claude/plugins/cache/counterfact-labs/counterfact/9.8.7'),'@counterfact-labs/cli@9.8.7','mcp']);
+  assert.match(r.stdout,/PASS Claude \| MCP package startup/);
+});
+test('credential proposal and discovery refusals before reservation pass in both agents',async t=>{
+  const r=await run(t,undefined,'credential-refusal');
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  for(const backend of ['Claude','Codex'])assert.match(r.stdout,new RegExp('PASS '+backend+' \\| planted-credential \\| Credential-containing prompt refused before reservation; charged \\$0.00'));
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
+  assert.equal(r.calls.filter(c=>c.name==='console'&&c.action==='reserve').length,6);
+});
+test('credential refusal passes with a paraphrased final agent response',async t=>{
+  const r=await run(t,undefined,'credential-paraphrase');
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  for(const backend of ['Claude','Codex'])assert.match(r.stdout,new RegExp('PASS '+backend+' \\| planted-credential'));
+});
+test('credential refusal accepts the expected prompt with a relative dot prefix',async t=>{
+  const r=await run(t,undefined,'credential-relative-proposal');
+  assert.equal(r.status,0,r.stdout+r.stderr);
+});
+for(const mode of ['credential-invalid-proposal','credential-unrelated-proposal'])test('credential refusal rejects '+mode,async t=>{
+  const r=await run(t,undefined,mode);
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  assert.match(r.stdout,/FAIL Claude \| planted-credential \| planted-credential: MCP analysis did not complete successfully/);
+  assert.match(r.stdout,/PASS Codex \| planted-credential/);
+});
+test('credential case fails when the file is admitted, uploaded and cited',async t=>{
+  const r=await run(t,undefined,'credential-admitted');
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  for(const backend of ['Claude','Codex'])assert.match(r.stdout,new RegExp('FAIL '+backend+' \\| planted-credential \\| planted-credential: expected refusal before reservation'));
+});
+for(const mode of ['credential-no-agent-with-proposal','credential-proposal-without-proposal','credential-failed-turn','credential-no-tool-event'])test('credential refusal rejects '+mode,async t=>{
+  const r=await run(t,undefined,mode);
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  const backend=['credential-proposal-without-proposal','credential-no-tool-event'].includes(mode)?'Codex':'Claude';
+  assert.match(r.stdout,new RegExp('FAIL '+backend+' \\| planted-credential'));
+});
+for(const mode of ['credential-paid-refusal','credential-wrong-refusal','no-agent-clean'])test('rejects '+mode,async t=>{
+  const r=await run(t,undefined,mode);
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  assert.match(r.stdout,new RegExp('FAIL Claude \\| '+(mode==='no-agent-clean'?'clean':'planted-credential')));
+});
+for(const mode of ['mismatched-analysis','mismatched-project','no-summary','tool-error'])test(mode+' still fails and retains independently verified receipt costs and URL',async t=>{
+  const r=await run(t,undefined,mode);
+  assert.equal(r.status,1,r.stdout+r.stderr);
+  const row=r.stdout.split('\n').find(line=>line.startsWith('FAIL Claude | clean'));
+  const reason=mode.startsWith('mismatched-')?'Missing matching console upload receipt':mode==='no-summary'?'Missing CLI summary or console findings URL':'MCP analysis did not complete successfully';
+  assert.match(row??'',new RegExp('^FAIL Claude \\| clean \\| clean: '+reason+'; estimate \\$1\\.00; charged \\(equals estimate\\) \\$1\\.00; provider not reported; [0-9]+\\.[0-9]s$'));
+  const summary=readFileSync(join(r.root,'summary.md'),'utf8');
+  assert.match(summary,/\| Claude \| clean \| FAIL \|.*https:\/\/app.counterfactlabs.com\/projects\/project-1\/findings/);
+});
+test('published CLI reply shapes, installed prefix and npm block work together',async t=>{
+  const r=await run(t,undefined,'cli-029');
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
+  assert.equal(r.stdout.split('\n').filter(line=>/^PASS (Claude|Codex) \| (clean|planted-authority|planted-credential|tools-agent) \|/.test(line)).length,8);
 });

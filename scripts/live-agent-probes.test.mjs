@@ -36,3 +36,16 @@ test('older CLI global help can report lack of cap even when analyze help is uns
   const r = await cap({ run: async args => args[0] === '--help' ? { code: 0, stdout: 'Usage: analyze [path]', stderr: '' } : { code: 1, stdout: '', stderr: 'Unknown option --help' } });
   assert.equal(r.pass, true); assert.match(r.reason, /not yet available/);
 });
+
+
+test('npm package page HTTP 403 is explicitly not checkable, while other errors still fail',async()=>{
+  const url='https://www.npmjs.com/package/@counterfact-labs/cli';
+  const rows=await probes.checkLinks('[CLI]('+url+')',async url=>({status:url.includes('npmjs.com')?403:200,url}));
+  assert.deepEqual(rows.find(r=>r.case===url),{backend:'free',case:url,pass:true,reason:'SKIP: npm package page not checkable (HTTP 403; external access block)'});
+  for(const status of [404,500]) {
+    const rows=await probes.checkLinks('[CLI]('+url+')',async url=>({status,url}));
+    assert.equal(rows.find(r=>r.case===url).pass,false);
+  }
+  const rows2=await probes.checkLinks('[Other](https://docs.example.com/a)',async url=>({status:403,url}));
+  assert.ok(rows2.every(r=>!r.pass));
+});

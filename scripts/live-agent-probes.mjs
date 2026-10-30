@@ -83,6 +83,9 @@ export async function checkLinks(readme, fetcher = fetch) {
       if (setup && ([404, 410].includes(response.status) || response.status < 300 && new URL(response.url).pathname.replace(/\/$/, '') !== '/setup')) {
         return { backend: 'free', case: url, pass: true, reason: 'SKIP: /setup not yet live' };
       }
+      if (url === 'https://www.npmjs.com/package/@counterfact-labs/cli' && response.status === 403) {
+        return { backend: 'free', case: url, pass: true, reason: 'SKIP: npm package page not checkable (HTTP 403; external access block)' };
+      }
       return { backend: 'free', case: url, pass: response.status >= 200 && response.status < 300, reason: `HTTP ${response.status}` };
     } catch { return { backend: 'free', case: url, pass: false, reason: 'Link request failed' }; }
   }));

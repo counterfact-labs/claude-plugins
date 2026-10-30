@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -95,7 +96,7 @@ test('the plugin starts the pinned package from CLI checkouts and preserves the 
   assert.deepEqual(JSON.parse(result.stdout), { source: 'packed-stub', args: ['mcp'], cwd: project });
 });
 
-test('the live MCP adapter forwards the plugin npm prefix and stdio replies', (t) => {
+test('the live MCP adapter forwards the plugin npm prefix and stdio replies', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'mcp-adapter-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const executable = join(root, 'npx');
@@ -104,12 +105,28 @@ test('the live MCP adapter forwards the plugin npm prefix and stdio replies', (t
     console.log(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { args: process.argv.slice(2) } }));
   });\n`, { mode: 0o755 });
   const args = ['-y', `--prefix=${join(root, 'plugin directory')}`, pin, 'mcp'];
-  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./live-agent-mcp.mjs', import.meta.url)), ...args], {
-    env: { PATH: process.env.PATH, HOME: root, LIVE_AGENT_REAL_NPX: executable,
-      LIVE_AGENT_BRIDGE: 'http://127.0.0.1:1', LIVE_AGENT_TOKEN: 'fictional-token' },
-    encoding: 'utf8', timeout: 5000,
-    input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n',
+  const events = [];
+  // tools/list is observed by the adapter: a real caller must supply its bridge.
+  const bridge = createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    events.push({ path: request.url, token: request.headers['x-live-agent-token'], body: JSON.parse(body) });
+    response.writeHead(200, { 'content-type': 'application/json' }); response.end('{}');
   });
+  await new Promise(resolve => bridge.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { bridge.close(resolve); bridge.closeAllConnections(); }));
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./live-agent-mcp.mjs', import.meta.url)), ...args], {
+    env: { PATH: process.env.PATH, HOME: root, LIVE_AGENT_REAL_NPX: executable,
+      LIVE_AGENT_BRIDGE: `http://127.0.0.1:${bridge.address().port}`, LIVE_AGENT_TOKEN: 'fictional-token' },
+    timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  t.after(() => child.kill('SIGKILL'));
+  let stdout = '', stderr = '';
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  child.stdin.end(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n');
+  const result = { status: await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); }), stdout, stderr };
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), { jsonrpc: '2.0', id: 1, result: { args } });
+  assert.deepEqual(events, [{ path: '/event', token: 'fictional-token', body: { kind: 'tools' } }]);
 });
