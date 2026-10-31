@@ -7,6 +7,7 @@ import { consoleOrigin, startBridge, analysisCeilingMicro } from './live-agent-b
 import { cliPin } from './plugin-release.mjs';
 import { cases, assertCase, credentialSkippedPromptMessage, credentialRefusalMessage, credentialProposalRefusalMessage } from './live-agent-cases.mjs';
 import { capture, probeMcp, overCapProbe, checkLinks } from './live-agent-probes.mjs';
+import { mcpFailureMessage } from './live-agent-diagnostics.mjs';
 
 const example = fileURLToPath(new URL('./fixtures/live-agent', import.meta.url));
 const adapter = fileURLToPath(new URL('./live-agent-mcp.mjs', import.meta.url));
@@ -146,16 +147,11 @@ function configure(home, bin) {
   ].join('\n');
   writeFileSync(join(home, '.codex/config.toml'), codexConfig);
 }
-function validateEvidence(state, caseId) {
-  if (state.failures.length) throw Error(state.failures[0]);
-  if (!state.servers.some(server => server?.name === 'counterfact-labs' && server.version)) throw Error('Counterfact MCP server did not initialize');
-  if (state.attempts !== 1 || state.results.length !== 1) throw Error('Expected one completed MCP analysis');
+// Validation and post-agent diagnostics must accept the same credential refusal.
+function mcpOutcome(state, caseId) {
   const result = state.results[0], structured = result?.structuredContent;
-  const text = result?.content?.filter(item => item.type === 'text').map(item => item.text).join('\n') ?? '';
-  if (structured?.signedIn === false || structured?.reason === 'unauthorized' ||
-      /Not signed in\.|Your saved sign-in can't be read\./.test(text)) {
-    throw Error('In-memory CLI sign-in failed; verify the test key and published CLI adapter compatibility');
-  }
+  const text = Array.isArray(result?.content)
+    ? result.content.filter(item => item?.type === 'text').map(item => item.text).join('\n') : '';
   // New CLIs explain the filtered prompt in a no-agent choice for either input.
   // Legacy proposal errors stay request-aware; neither path may reserve.
   const spec = cases.find(spec => spec.id === caseId);
@@ -174,7 +170,22 @@ function validateEvidence(state, caseId) {
       !state.reservations.size && !state.receipts.length && !state.findings.length) {
     return { credentialRefused: true, credentialMessageAvailable };
   }
-  if (result?.isError || structured?.exitCode !== 0) throw Error('MCP analysis did not complete successfully');
+  if (result?.isError || structured?.exitCode !== 0) return { failureMessage: mcpFailureMessage(structured) };
+  return {};
+}
+function validateEvidence(state, caseId) {
+  if (state.failures.length) throw Error(state.failures[0]);
+  if (!state.servers.some(server => server?.name === 'counterfact-labs' && server.version)) throw Error('Counterfact MCP server did not initialize');
+  if (state.attempts !== 1 || state.results.length !== 1) throw Error('Expected one completed MCP analysis');
+  const result = state.results[0], structured = result?.structuredContent;
+  const text = result?.content?.filter(item => item.type === 'text').map(item => item.text).join('\n') ?? '';
+  if (structured?.signedIn === false || structured?.reason === 'unauthorized' ||
+      /Not signed in\.|Your saved sign-in can't be read\./.test(text)) {
+    throw Error('In-memory CLI sign-in failed; verify the test key and published CLI adapter compatibility');
+  }
+  const outcome = mcpOutcome(state, caseId);
+  if (outcome.failureMessage) throw Error(outcome.failureMessage);
+  if (outcome.credentialRefused) return outcome;
   const receipt = state.receipts[0];
   if (state.receipts.length !== 1 || structured.analysisId !== undefined && receipt.analysisId !== structured.analysisId ||
       structured.projectId !== undefined && receipt.projectId !== structured.projectId) {
@@ -183,6 +194,7 @@ function validateEvidence(state, caseId) {
   const url = `${consoleOrigin}/projects/${receipt.projectId}/findings`;
   // A verified empty upload plus an explicit empty MCP result is completion.
   // CLI 0.2.9 prints only the link; newer CLIs also describe the files read.
+  const spec = cases.find(spec => spec.id === caseId);
   const findingFields = ['findingIds', 'findings'].filter(field => Object.hasOwn(structured, field));
   const emptyResult = spec?.expect === 'empty' && !state.findings.length && findingFields.length > 0 &&
     findingFields.every(field => Array.isArray(structured[field]) && !structured[field].length);
@@ -270,8 +282,11 @@ async function freeProbes({ backend, home, bin, root, key, budget, realNpx, rows
   } catch (error) { add('free probes', { pass: false, reason: error.message }); }
   finally {
     await bridge?.close();
-    if (bridge?.state.failures.length) for (const row of rows.slice(firstRow)) {
-      row.pass = false; row.reason += '; ' + bridge.state.failures.join('; ');
+    for (const row of rows.slice(firstRow)) {
+      if (bridge?.state.failures.length) {
+        row.pass = false; row.reason += '; ' + bridge.state.failures.join('; ');
+      }
+      if (!row.pass && bridge?.state.refusals.length) row.reason += '; ' + [...new Set(bridge.state.refusals)].join('; ');
     }
   }
 }
@@ -347,6 +362,12 @@ async function main() {
             row = { ...saved, url: `${consoleOrigin}/projects/${saved.projectId}/findings`, provider: 'not reported', ...row };
           }
           if (bridge?.state.failures.length) row = { ...row, pass: false, reason: `${spec.id}: ${bridge.state.failures.join('; ')}` };
+          // A failed agent process must not hide a completed product refusal.
+          if (!row.pass && bridge?.state.results.length === 1) {
+            const { failureMessage } = mcpOutcome(bridge.state, spec.id);
+            if (failureMessage && !row.reason.includes(failureMessage)) row.reason += '; ' + failureMessage;
+          }
+          if (!row.pass && bridge?.state.refusals.length) row.reason += '; ' + [...new Set(bridge.state.refusals)].join('; ');
           rmSync(join(root, backend, spec.id), { recursive: true, force: true });
         }
         rows.push({ backend, case: spec.id, duration: ((Date.now() - started) / 1000).toFixed(1), ...row });

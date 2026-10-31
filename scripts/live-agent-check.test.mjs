@@ -102,7 +102,8 @@ if (name === 'npx') {
     } else if (q.method === 'tools/call') {
       if(q.params.name==='sign_in_status') {
         if(mode==='free-bridge-refusal')await fetch('https://app.counterfactlabs.com/api/cli/checks/local',{method:'POST',body:'{}'});
-        send({jsonrpc:'2.0',id:q.id,result:{structuredContent:{signedIn:!['signed-out','free-bridge-refusal'].includes(mode),exitCode:0},content:[]}}); return;
+        if(mode==='free-console-refusal')await fetch('https://app.counterfactlabs.com/api/cli/balance');
+        send({jsonrpc:'2.0',id:q.id,result:{structuredContent:{signedIn:!['signed-out','free-bridge-refusal','free-console-refusal'].includes(mode),exitCode:0},content:[]}}); return;
       }
       if (mode === 'sign-in-changed') {
         send({jsonrpc:'2.0',id:q.id,result:{isError:true,structuredContent:{exitCode:1,reason:'unauthorized'},content:[{type:'text',text:'Not signed in. Run counterfact-labs login.'}]}});
@@ -115,7 +116,7 @@ if (name === 'npx') {
         const call = (url, body) => new Promise((resolve,reject) => {
           const req = require('node:https').request('https://app.counterfactlabs.com'+url, {
             method:'POST',headers:{authorization:'Bearer '+credential.token,'content-type':'application/json'}
-          }, res => {let s='';res.on('data',v=>s+=v);res.on('end',()=>{const r=JSON.parse(s);res.statusCode<300?resolve(r):reject(Error('refused'));});});
+          }, res => {let s='';res.on('data',v=>s+=v);res.on('end',()=>{const r=JSON.parse(s);res.statusCode<300?resolve(r):reject(Object.assign(Error('fictional-private-diagnostic'),{reason:r.code}));});});
           req.on('error',reject);req.end(JSON.stringify(body));
         });
         let findings=[];
@@ -139,6 +140,15 @@ if (name === 'npx') {
           send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:[{type:'text',text}],structuredContent:{text,exitCode:1,...(proposalRefusal?{}:{kind:mode==='credential-new-wrong-kind'?'choose_agent':'no_agent',candidates:mode==='credential-new-candidates'?[{folder:'.',reason:'system_prompt.md'}]:[]}),...(modern?{skippedPrompts:['system_prompt.md']}:{}),reason:'request_failed'}}});
           return;
         }
+        if (mode === 'malformed-mcp-content') {
+          send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:{type:'text',text:'fictional-private-diagnostic'},structuredContent:{reason:'repeat_too_soon',exitCode:1}}});
+          return;
+        }
+        if (mode.startsWith('mcp-refusal-')) {
+          const reason = mode.slice('mcp-refusal-'.length).replace(/-agent-exit$/, '');
+          send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:[{type:'text',text:'fictional-private-diagnostic'}],structuredContent:{reason,exitCode:1,text:'fictional-private-diagnostic'}}});
+          return;
+        }
         if (mode === 'bridge-fails') await call('/api/cli/unexpected',{});
         const created = await call('/api/cli/relay-reservations',{action:'create'});
         const reserved = await call('/api/cli/relay-reservations',{action:'reserve',reservationId:created.reservationId});
@@ -152,7 +162,7 @@ if (name === 'npx') {
         const text = analysisText(emptyCase, noUrl, resultUrl, findings);
         send({jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text}],isError:mode==='tool-error',
           structuredContent:{text,...resultCoverage(emptyCase),exitCode:0,...(noUrl?{}:{url:resultUrl}),...(mode==='cli-029'||mode==='optional-mcp-ids'?{}:{analysisId:mode==='mismatched-analysis'?'other-analysis':'analysis-1',projectId:mode==='mismatched-project'?'other-project':'project-1'}),...resultFindings(emptyCase)}}});
-      } catch { send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:[{type:'text',text:'Analysis refused'}],structuredContent:{exitCode:1,text:'Analysis refused'}}}); }
+      } catch (error) { send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:[{type:'text',text:'fictional-private-diagnostic'}],structuredContent:{exitCode:error.reason==='low_balance'?2:1,text:'fictional-private-diagnostic',...(mode==='refusal-no-mcp-reason'?{}:{reason:error.reason})}}}); }
     }
   });
 } else if (name === 'claude' && args[0] === 'plugin') {
@@ -194,7 +204,7 @@ if (name === 'npx') {
       if (mode==='bridge-fails'&&!fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')) {setInterval(()=>{},1000);return;}
       if (mode==='duplicate') {write({id:3,method:'tools/call',params:{name:'analyze_agent',arguments:{path:process.cwd()}}});return;}
       if(name==='codex'&&!(mode==='credential-no-tool-event'&&fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')))send({type:'item.completed',item:{type:'mcp_tool_call',server:r.result?.isError&&mode==='credential-wrong-server'?'other':'counterfact',tool:r.result?.isError&&mode==='credential-wrong-tool'?'get_balance':'analyze_agent',status:codexToolStatus(r.result),result:r.result}});
-      child.stdin.end();done();
+      child.stdin.end();done();if((mode==='refusal-agent-exit'||mode.endsWith('-agent-exit'))&&r.result?.isError)process.exitCode=3;
     } else if(r.id===3){child.stdin.end();done();}
   });
   write({id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name,version:'1'}}});
@@ -227,6 +237,14 @@ globalThis.fetch=async (input,options={})=>{
   if(headers.get('authorization')!=='Bearer fictional-live-key') throw Error('wrong runtime sign-in');
   const body=options.body?JSON.parse(options.body):{};
   appendFileSync(process.env.FAKE_LOG,JSON.stringify({name:'console',path:new URL(url).pathname,action:body.action})+'\\n');
+  if(requested.pathname==='/api/cli/balance'&&process.env.FAKE_MODE==='free-console-refusal') {
+    return Response.json({code:'rate_limited',error:'fictional-private-diagnostic',token:'fictional-provider-key'},{status:429});
+  }
+  if(body.action==='reserve'&&process.env.FAKE_MODE.startsWith('refusal-')&&count>1) {
+    const mode=process.env.FAKE_MODE;
+    const code=['refusal-no-mcp-reason','refusal-agent-exit'].includes(mode)?'low_balance':mode.slice('refusal-'.length);
+    return Response.json({code,error:'fictional-private-diagnostic',token:'fictional-provider-key'},{status:code==='rate_limited'?429:402});
+  }
   if(body.action==='reserve'&&process.env.FAKE_MODE==='refused-slow-reserve')await new Promise(resolve=>setTimeout(resolve,1300));
   let result;
   if(body.action==='create') result={reservationId:'reservation-'+(++count),checkId:'check-'+count,projectId:'project-1',state:'quoted'};
@@ -284,6 +302,141 @@ async function run(t, args = ['run', '--confirm-paid'], mode = 'ok', key = 'fict
   const calls=readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(s=>JSON.parse(s));
   return {status,stdout,stderr,calls,root,duration:Date.now()-started};
 }
+
+// These exercise the real report/adapter/bridge. Dropping safe reason codes or
+// copying a raw diagnostic would respectively hide admission failures or leak data.
+for (const code of ['low_balance', 'org_spend_limit', 'free_cap_reached', 'rate_limited']) test('records product refusal codes after one charged analysis: '+code, async t => {
+  const r = await run(t, undefined, 'refusal-'+code);
+  assert.equal(r.status, 1, r.stdout+r.stderr);
+  const summary = readFileSync(join(r.root, 'summary.md'), 'utf8');
+  for (const output of [r.stdout, summary]) {
+    assert.match(output, /(?:PASS Claude \| clean \| Analysis completed|\| Claude \| clean \| PASS \| Analysis completed)/);
+    for (const [backend, ids] of [['Claude', ['planted-authority','tools-agent']], ['Codex', ['clean','planted-authority','tools-agent']]]) {
+      for (const id of ids) {
+        const row = output.split('\n').find(line => line.includes(backend+' | '+id+' |'));
+        assert.ok(row, output);
+        assert.ok(row.includes('MCP analysis did not complete successfully (reason: '+code+'; exitCode: '+(code==='low_balance'?2:1)+')'), row);
+        assert.ok(row.includes('console refusal: '+code+' (HTTP '+(code==='rate_limited'?429:402)+'; relay-reservations/reserve)'), row);
+      }
+    }
+    assert.doesNotMatch(output, /fictional-private-diagnostic|fictional-provider-key|fictional-live-key/);
+  }
+  assert.equal(r.calls.filter(c => c.name === 'model-work').length, 1);
+  assert.equal(r.calls.filter(c => c.name === 'console' && c.path.endsWith('/checks/local')).length, 1);
+  assert.equal(r.calls.filter(c => c.name === 'console' && c.action === 'reserve').length, 6);
+  assert.equal(r.stdout.split('\n').filter(line => /^PASS .*planted-credential/.test(line)).length, 2);
+});
+for (const [mode, code, failure] of [
+  ['refusal-no-mcp-reason', 'low_balance', 'MCP analysis did not complete successfully (reason: not_reported; exitCode: 2)'],
+  ['refusal-agent-exit', 'low_balance', 'claude exited 3'],
+  ['refusal-fictional_provider_secret', 'not_reported', 'MCP analysis did not complete successfully (reason: not_reported; exitCode: 1)'],
+]) test('retains safe console refusal evidence when '+mode, async t => {
+  const r = await run(t, undefined, mode);
+  assert.equal(r.status, 1, r.stdout+r.stderr);
+  for (const output of [r.stdout, readFileSync(join(r.root, 'summary.md'), 'utf8')]) {
+    const row = output.split('\n').find(line => line.includes('Claude | planted-authority |'));
+    assert.ok(row.includes(failure), row);
+    assert.ok(row.includes('console refusal: '+code+' (HTTP 402; relay-reservations/reserve)'), row);
+    assert.doesNotMatch(output, /fictional_provider_secret|fictional-private-diagnostic|fictional-provider-key|fictional-live-key/);
+  }
+  assert.equal(r.calls.filter(c => c.name === 'model-work').length, 1);
+});
+for (const [raw, expected] of [['repeat_too_soon','repeat_too_soon'], ['relay_unreachable','relay_unreachable'], ['fictional_provider_secret','not_reported'], ['low_balance\nFAKE_ROW','not_reported']]) test('records only known structured MCP refusal codes: '+JSON.stringify(raw), async t => {
+  const r = await run(t, undefined, 'mcp-refusal-'+raw);
+  assert.equal(r.status, 1, r.stdout+r.stderr);
+  for (const output of [r.stdout, readFileSync(join(r.root, 'summary.md'), 'utf8')]) {
+    const row = output.split('\n').find(line => line.includes('Claude | planted-authority |'));
+    assert.ok(row.includes('MCP analysis did not complete successfully (reason: '+expected+'; exitCode: 1)'), row);
+    assert.doesNotMatch(output, /fictional_provider_secret|FAKE_ROW|fictional-private-diagnostic|fictional-provider-key|fictional-live-key|console refusal:/);
+  }
+  assert.equal(r.calls.filter(c => c.name === 'model-work').length, 0);
+});
+
+test('retains a completed MCP refusal when the coding agent exits nonzero', async t => {
+  const r = await run(t, undefined, 'mcp-refusal-repeat_too_soon-agent-exit');
+  assert.equal(r.status, 1, r.stdout+r.stderr);
+  for (const output of [r.stdout, readFileSync(join(r.root, 'summary.md'), 'utf8')]) {
+    const row = output.split('\n').find(line => line.includes('Claude | planted-authority |'));
+    assert.ok(row.includes('claude exited 3; MCP analysis did not complete successfully (reason: repeat_too_soon; exitCode: 1)'), row);
+    assert.doesNotMatch(output, /fictional-private-diagnostic|console refusal:/);
+  }
+  assert.equal(r.calls.filter(c => c.name === 'model-work').length, 0);
+});
+
+test('accepted credential refusal does not become an MCP failure after a failed agent turn', async t => {
+  const r = await run(t, undefined, 'credential-failed-turn');
+  assert.equal(r.status, 1, r.stdout+r.stderr);
+  for (const output of [r.stdout, readFileSync(join(r.root, 'summary.md'), 'utf8')]) {
+    for (const [backend, reason] of [['Claude', 'Claude did not return completed results and URL'], ['Codex', 'Codex did not return completed MCP results and URL']]) {
+      const row = output.split('\n').find(line => line.includes(backend+' | planted-credential |'));
+      assert.ok(row?.includes('planted-credential: '+reason), row);
+      assert.doesNotMatch(row, /MCP analysis did not complete successfully/);
+    }
+  }
+  assert.equal(r.calls.filter(c => c.name === 'model-work').length, 6);
+  assert.equal(r.calls.filter(c => c.name === 'console' && c.action === 'reserve').length, 6);
+});
+
+test('reports console refusal evidence on failed free probes only', async t => {
+  const r = await run(t, undefined, 'free-console-refusal');
+  assert.equal(r.status, 1, r.stdout+r.stderr);
+  for (const output of [r.stdout, readFileSync(join(r.root, 'summary.md'), 'utf8')]) {
+    for (const backend of ['Claude', 'Codex']) {
+      const row = output.split('\n').find(line => line.includes(backend+' | sign-in |'));
+      assert.ok(row?.includes('Sign-in status did not confirm signed in; console refusal: rate_limited (HTTP 429; balance)'), row);
+      const passed = output.split('\n').filter(line => line.includes(backend+' |') && line.includes('PASS'));
+      assert.ok(passed.length > 0, output);
+      for (const row of passed) assert.doesNotMatch(row, /console refusal:/);
+    }
+    assert.doesNotMatch(output, /fictional-private-diagnostic|fictional-provider-key|fictional-live-key/);
+  }
+});
+
+test('malformed MCP content cannot prevent failed-row diagnostics', async t => {
+  const r = await run(t, undefined, 'malformed-mcp-content');
+  assert.equal(r.status, 1, r.stdout+r.stderr);
+  assert.ok(existsSync(join(r.root, 'summary.md')), r.stdout+r.stderr);
+  for (const output of [r.stdout, readFileSync(join(r.root, 'summary.md'), 'utf8')]) {
+    const row = output.split('\n').find(line => line.includes('Claude | planted-authority |'));
+    assert.ok(row?.includes('MCP analysis did not complete successfully (reason: repeat_too_soon; exitCode: 1)'), row ?? output);
+    assert.doesNotMatch(output, /fictional-private-diagnostic|fictional-provider-key|fictional-live-key/);
+  }
+});
+
+test('records HTTP refusal status without persisting a non-JSON body', async t => {
+  const original = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (input, options) => {
+    if (!String(input).startsWith('https://app.counterfactlabs.com/')) return original(input, options);
+    return new Response('fictional-private-diagnostic fictional-provider-key', {status:429});
+  });
+  const bridge = await startBridge({key:'fictional-live-key', budget:{used:0,cap:5000000}, folder:resolve(fixtureDir), free:true});
+  t.after(() => bridge.close());
+  const response = await fetch(bridge.url+'/console/api/cli/relay-reservations', {
+    method:'POST', headers:{'x-live-agent-token':bridge.token}, body:JSON.stringify({action:'reserve',reservationId:'reservation-1'}),
+  });
+  assert.equal(response.status, 502);
+  assert.deepEqual(bridge.state.refusals, ['console refusal: not_reported (HTTP 429; relay-reservations/reserve)']);
+  assert.doesNotMatch(JSON.stringify(bridge.state), /fictional-private-diagnostic|fictional-provider-key/);
+});
+test('records a console refusal from abandoned-hold cleanup', async t => {
+  const original = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (input, options) => {
+    if (!String(input).startsWith('https://app.counterfactlabs.com/')) return original(input, options);
+    const body = JSON.parse(options.body);
+    if (body.action === 'reserve') return Response.json(reserveReply());
+    return Response.json({code:'unavailable',error:'fictional-private-diagnostic'}, {status:503});
+  });
+  const bridge = await startBridge({key:'fictional-live-key', budget:{used:0,cap:5000000}, folder:resolve(fixtureDir), free:true});
+  let closed = false;
+  t.after(async () => { if (!closed) await bridge.close(); });
+  const response = await fetch(bridge.url+'/console/api/cli/relay-reservations', {
+    method:'POST', headers:{'x-live-agent-token':bridge.token}, body:JSON.stringify({action:'reserve',reservationId:'reservation-1'}),
+  });
+  assert.equal(response.status, 200);
+  await bridge.close(); closed = true;
+  assert.deepEqual(bridge.state.refusals, ['console refusal: unavailable (HTTP 503; relay-reservations/fail)']);
+  assert.deepEqual(bridge.state.failures, ['Could not release refused reservation hold']);
+});
 
 for (const mode of ['empty-legacy', 'empty-coverage']) test('accepts completed clean results with the matching URL '+mode, async t => {
   const r = await run(t, undefined, mode);
@@ -839,8 +992,9 @@ for(const mode of ['mismatched-analysis','mismatched-project','no-summary','tool
   const r=await run(t,undefined,mode);
   assert.equal(r.status,1,r.stdout+r.stderr);
   const row=r.stdout.split('\n').find(line=>line.startsWith('FAIL Claude | clean'));
-  const reason=mode.startsWith('mismatched-')?'Missing matching console upload receipt':mode==='no-summary'?'Missing CLI summary or console findings URL':'MCP analysis did not complete successfully';
-  assert.match(row??'',new RegExp('^FAIL Claude \\| clean \\| clean: '+reason+'; estimate \\$1\\.00; charged \\(equals estimate\\) \\$1\\.00; provider not reported; [0-9]+\\.[0-9]s$'));
+  const reason=mode.startsWith('mismatched-')?'Missing matching console upload receipt':mode==='no-summary'?'Missing CLI summary or console findings URL':'MCP analysis did not complete successfully (reason: not_reported; exitCode: 0)';
+  assert.equal(row?.split('; estimate ')[0], 'FAIL Claude | clean | clean: '+reason);
+  assert.match(row??'',/; estimate \$1\.00; charged \(equals estimate\) \$1\.00; provider not reported; [0-9]+\.[0-9]s$/);
   const summary=readFileSync(join(r.root,'summary.md'),'utf8');
   assert.match(summary,/\| Claude \| clean \| FAIL \|.*https:\/\/app.counterfactlabs.com\/projects\/project-1\/findings/);
 });
