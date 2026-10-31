@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
+import { consoleRefusal } from './live-agent-diagnostics.mjs';
 
 export const consoleOrigin = 'https://app.counterfactlabs.com';
 export const analysisCeilingMicro = 5_000_000;
@@ -28,13 +29,13 @@ export async function startBridge({ key, budget, folder, free = false }) {
   const token = randomBytes(32).toString('hex');
   const failure = new AbortController();
   const pendingRequests = new Set();
-  const state = { attempts: 0, servers: [], results: [], receipts: [], reservations: new Map(), failures: [], findings: [], coverageSupported: false, reservationRequests: 0 };
+  const state = { attempts: 0, servers: [], results: [], receipts: [], reservations: new Map(), failures: [], refusals: [], findings: [], coverageSupported: false, reservationRequests: 0 };
   const fail = message => {
     state.failures.push(message);
     failure.abort(new Error(message));
     return new Error(message);
   };
-  const upstream = async (path, method, body, headers = {}) => {
+  const upstream = async (path, method, body, headers = {}, action) => {
     // Only known console API endpoints may carry the account key. The URL is rebuilt
     // from constants plus encoded segments, so no caller value reaches it verbatim.
     const response = await fetch(consoleUrl(path), {
@@ -43,12 +44,19 @@ export async function startBridge({ key, budget, folder, free = false }) {
     });
     const text = (await response.text()).replaceAll(key, '[redacted]');
     if (text.length > 3 * 1024 * 1024) throw fail('Console response too large');
-    return { status: response.status, text, value: JSON.parse(text) };
+    let value;
+    try { value = JSON.parse(text); }
+    finally {
+      // Refusal status survives malformed bodies and cleanup's direct requests.
+      const refusal = consoleRefusal(path, action, { status: response.status, value });
+      if (refusal) state.refusals.push(refusal);
+    }
+    return { status: response.status, text, value };
   };
   async function release(id) {
     try {
       const result = await upstream('/api/cli/relay-reservations', 'POST',
-        JSON.stringify({ action: 'fail', reservationId: id }), { 'content-type': 'application/json' });
+        JSON.stringify({ action: 'fail', reservationId: id }), { 'content-type': 'application/json' }, 'fail');
       if (result.status >= 300 || !['released', 'unheld'].includes(result.value.settlement)) {
         throw Error('Release refused');
       }
@@ -98,7 +106,7 @@ export async function startBridge({ key, budget, folder, free = false }) {
       for (const [name, value] of Object.entries(request.headers)) {
         if (!['host', 'connection', 'content-length', 'authorization', 'x-live-agent-token'].includes(name)) headers[name] = value;
       }
-      const result = await upstream(path, request.method, text, headers);
+      const result = await upstream(path, request.method, text, headers, body.action);
       if (path === '/api/cli/relay-reservations' && body.action === 'reserve' && result.status < 300) {
         const { priceMicro, reservationId } = result.value;
         // The test account must use the priced path. Withhold its relay
