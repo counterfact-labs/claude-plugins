@@ -81,7 +81,7 @@ test('live analysis scopes secrets, pins dependencies and bounds each paid run',
   assert.match(install.run, /@anthropic-ai\/claude-code@\d+\.\d+\.\d+(?:\s|$)/);
   assert.match(install.run, /@openai\/codex@\d+\.\d+\.\d+(?:\s|$)/);
   const live = steps.find(step => step.name === 'Run live agent analysis');
-  assert.match(live.run, /scripts\/live-agent-check\.sh run --confirm-paid --max-dollars 20(?:\s|$)/);
+  assert.match(live.run, /scripts\/live-agent-check\.sh run --confirm-paid --max-dollars 15(?:\s|$)/);
   const seconds = Number(live.run.match(/--timeout-seconds (\d+)/)?.[1]);
   const job = Object.values(config.jobs).find(job => job.steps.includes(live));
   assert.ok(seconds > 0 && seconds * 10 + 16 * 60 + 6 * 60 < Number(live['timeout-minutes']) * 60,

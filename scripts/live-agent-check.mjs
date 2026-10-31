@@ -4,17 +4,19 @@ import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { consoleOrigin, startBridge, analysisCeilingMicro } from './live-agent-bridge.mjs';
-import { cases, assertCase } from './live-agent-cases.mjs';
+import { cliPin } from './plugin-release.mjs';
+import { cases, assertCase, credentialSkippedPromptMessage, credentialRefusalMessage, credentialProposalRefusalMessage } from './live-agent-cases.mjs';
 import { capture, probeMcp, overCapProbe, checkLinks } from './live-agent-probes.mjs';
 
 const example = fileURLToPath(new URL('./fixtures/live-agent', import.meta.url));
 const adapter = fileURLToPath(new URL('./live-agent-mcp.mjs', import.meta.url));
-const usage = 'Usage: scripts/live-agent-check.sh <check|run> [--confirm-paid] [--max-dollars 20] [--timeout-seconds 1200] [--agent-dir path]';
+const runCeilingDollars = 15;
+const usage = `Usage: scripts/live-agent-check.sh <check|run> [--confirm-paid] [--max-dollars ${runCeilingDollars}] [--timeout-seconds 1200] [--agent-dir path]`;
 const quote = text => /^[a-zA-Z0-9_@%+=:,./#-]+$/.test(text) ? text : "'" + text.replaceAll("'", "'\\''") + "'";
 function options(args) {
   const mode = args.shift();
   if (!['check', 'run'].includes(mode)) throw Error(usage);
-  let max = '20', seconds = '1200', confirmed = false, agentDir = example;
+  let max = String(runCeilingDollars), seconds = '1200', confirmed = false, agentDir = example;
   const seen = new Set();
   while (args.length) {
     const flag = args.shift();
@@ -28,9 +30,9 @@ function options(args) {
       if (!agentDir?.trim() || agentDir.startsWith('--')) throw Error('Invalid --agent-dir; use a directory path');
     } else throw Error(usage);
   }
-  if (!/^\d+(?:\.\d{1,6})?$/.test(max) || Number(max) <= 0 || Number(max) > 20 ||
+  if (!/^\d+(?:\.\d{1,6})?$/.test(max) || Number(max) <= 0 || Number(max) > runCeilingDollars ||
       !Number.isSafeInteger(Math.round(Number(max) * 1e6))) {
-    throw Error('Invalid --max-dollars; use a positive dollar amount at most 20 with at most six decimals');
+    throw Error(`Invalid --max-dollars; use a positive dollar amount at most ${runCeilingDollars} with at most six decimals`);
   }
   if (!/^\d+$/.test(seconds) || !Number.isSafeInteger(Number(seconds)) ||
       Number(seconds) < 1 || Number(seconds) > 3600) {
@@ -57,7 +59,7 @@ function commands(backend) {
 }
 function preview(config) {
   console.log('Live agent release analysis preview. No network calls or executables.');
-  console.log(`Total Counterfact analysis estimate cap: $${(config.cap / 1e6).toFixed(2)}. Per-analysis ceiling $${(analysisCeilingMicro / 1e6).toFixed(2)}; eight analyses. run requires --confirm-paid and COUNTERFACT_LIVE_TEST_KEY.`);
+  console.log(`Total Counterfact analysis estimate cap: $${(config.cap / 1e6).toFixed(2)}. Per-analysis ceiling $${(analysisCeilingMicro / 1e6).toFixed(2)}; up to six analyses. run requires --confirm-paid and COUNTERFACT_LIVE_TEST_KEY.`);
   console.log(`Copy ${config.agentDir} separately for Claude and Codex under a private temporary directory (clean case; the other cases use their dedicated fixtures).`);
   console.log('Each gets fresh HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, XDG directories, and npm cache; use provider credentials from environment only.');
   console.log('Install an npx stdio adapter ahead of PATH. It launches the published MCP server, captures actual protocol replies, and permits one analysis per agent per case.');
@@ -71,7 +73,7 @@ function preview(config) {
   }
   console.log(`\nPer-command deadline: ${config.seconds}s; terminate process groups and remove temporary files on exit or interruption.`);
   console.log('Require MCP initialization, a completed analyze_agent reply, CLI summary, an actual console upload receipt, and the matching URL in the final coding-agent response.');
-  console.log('Cases in BOTH agents: clean (completion and supported coverage), planted-authority (system_prompt.md:6), planted-credential (system_prompt.md:12), tools-agent (tools.json:5 and tools.js:3).');
+  console.log('Cases in BOTH agents: clean (completion and supported coverage), planted-authority (system_prompt.md:6), planted-credential (credential filtering before reservation), tools-agent (tools.json:5 and tools.js:3).');
   console.log('Free probes every run: sign-in status, installed MCP startup inside package @counterfact-labs/cli, supported over-cap refusal, /setup and README links.');
   console.log('Print one-screen PASS/FAIL rows with duration, estimated/charged Counterfact amount, and provider cost if reported; fail the process if either agent fails.');
 }
@@ -144,7 +146,7 @@ function configure(home, bin) {
   ].join('\n');
   writeFileSync(join(home, '.codex/config.toml'), codexConfig);
 }
-function validateEvidence(state) {
+function validateEvidence(state, caseId) {
   if (state.failures.length) throw Error(state.failures[0]);
   if (!state.servers.some(server => server?.name === 'counterfact-labs' && server.version)) throw Error('Counterfact MCP server did not initialize');
   if (state.attempts !== 1 || state.results.length !== 1) throw Error('Expected one completed MCP analysis');
@@ -154,10 +156,28 @@ function validateEvidence(state) {
       /Not signed in\.|Your saved sign-in can't be read\./.test(text)) {
     throw Error('In-memory CLI sign-in failed; verify the test key and published CLI adapter compatibility');
   }
+  // New CLIs explain the filtered prompt in a no-agent choice for either input.
+  // Legacy proposal errors stay request-aware; neither path may reserve.
+  const spec = cases.find(spec => spec.id === caseId);
+  const proposed = state.proposal !== undefined;
+  const proposedFiles = state.proposal?.files;
+  // A wrong path produces the same product message without testing filtering.
+  const expectedProposal = Array.isArray(proposedFiles) && proposedFiles.length === spec?.files.length &&
+    spec.files.every(path => proposedFiles.some(file => file?.role === 'prompt' && typeof file.path === 'string' &&
+      file.path.replace(/^(?:\.\/)+/, '') === path));
+  const refusal = proposed ? credentialProposalRefusalMessage : credentialRefusalMessage;
+  const noAgentChoice = structured?.kind === 'no_agent' && Array.isArray(structured.candidates) && !structured.candidates.length;
+  const credentialMessageAvailable = spec?.expect === 'refused' && text.trim() === credentialSkippedPromptMessage(spec.files[0]);
+  const expectedChoice = credentialMessageAvailable ? noAgentChoice : proposed ? structured?.kind === undefined : noAgentChoice;
+  if (spec?.expect === 'refused' && result?.isError === true && structured?.exitCode === 1 &&
+      (!proposed || expectedProposal) && expectedChoice && (credentialMessageAvailable || text.trim() === refusal) && state.reservationRequests === 0 &&
+      !state.reservations.size && !state.receipts.length && !state.findings.length) {
+    return { credentialRefused: true, credentialMessageAvailable };
+  }
   if (result?.isError || structured?.exitCode !== 0) throw Error('MCP analysis did not complete successfully');
   const receipt = state.receipts[0];
-  if (state.receipts.length !== 1 || receipt.analysisId !== structured.analysisId ||
-      structured.projectId && receipt.projectId !== structured.projectId) {
+  if (state.receipts.length !== 1 || structured.analysisId !== undefined && receipt.analysisId !== structured.analysisId ||
+      structured.projectId !== undefined && receipt.projectId !== structured.projectId) {
     throw Error('Missing matching console upload receipt');
   }
   const url = `${consoleOrigin}/projects/${receipt.projectId}/findings`;
@@ -169,7 +189,7 @@ function validateClaude(events, receipt) {
     server.name === 'plugin:counterfact:counterfact' && server.status === 'connected'));
   if (!connected) throw Error('Installed Claude plugin did not connect');
   const final = events.findLast(event => event.type === 'result');
-  if (!final || final.is_error || final.subtype !== 'success' || !final.result?.includes(receipt.url)) {
+  if (!final || final.is_error || final.subtype !== 'success' || !receipt.credentialRefused && !final.result?.includes(receipt.url)) {
     throw Error('Claude did not return completed results and URL');
   }
   return { ...receipt, provider: Number.isFinite(final.total_cost_usd) ? `$${final.total_cost_usd.toFixed(2)}` : 'not reported' };
@@ -180,13 +200,13 @@ function validateCodex(events, receipt) {
   const completedTurn = events.some(event => event.type === 'turn.completed');
   const failed = events.some(event => event.type === 'turn.failed' || event.type === 'error');
   const returnedUrl = events.some(event => event.item?.type === 'agent_message' && event.item.text?.includes(receipt.url));
-  if (!completedTool || !completedTurn || failed || !returnedUrl) {
+  if (!completedTool || !completedTurn || failed || !receipt.credentialRefused && !returnedUrl) {
     throw Error('Codex did not return completed MCP results and URL');
   }
   return { ...receipt, provider: 'not reported' };
 }
-function validate(backend, output, state) {
-  const receipt = validateEvidence(state);
+function validate(backend, output, state, caseId) {
+  const receipt = validateEvidence(state, caseId);
   let events;
   try { events = output.trim().split('\n').map(line => JSON.parse(line)); } catch { throw Error('Invalid coding-agent JSON output'); }
   return backend === 'claude' ? validateClaude(events, receipt) : validateCodex(events, receipt);
@@ -196,10 +216,13 @@ function pluginCli(home) {
   const entries = registry.plugins?.['counterfact@counterfact-labs'];
   const entry = entries?.find(item => item.scope === 'user');
   if (!entry?.installPath || !resolve(entry.installPath).startsWith(resolve(home) + '/')) throw Error('Installed plugin path unavailable');
-  const server = JSON.parse(readFileSync(join(entry.installPath, '.mcp.json'), 'utf8')).mcpServers?.counterfact;
-  if (server?.command !== 'npx' || server.args?.length !== 3 || server.args[0] !== '-y' || server.args[2] !== 'mcp' ||
-      !/^@counterfact-labs\/cli@\d+\.\d+\.\d+$/.test(server.args[1])) throw Error('Installed plugin MCP configuration unavailable');
-  return server.args[1];
+  const launch = cliPin(entry.installPath, entry.installPath);
+  const expected = ['-y', `--prefix=${entry.installPath}`, launch.pin, 'mcp'];
+  const legacy = ['-y', launch.pin, 'mcp'];
+  if (launch.command !== 'npx' || ![expected, legacy].some(args => JSON.stringify(args) === JSON.stringify(launch.args))) {
+    throw Error('Installed plugin MCP configuration unavailable');
+  }
+  return launch;
 }
 async function freeProbes({ backend, home, bin, root, key, budget, realNpx, rows }) {
   const firstRow = rows.length;
@@ -210,11 +233,11 @@ async function freeProbes({ backend, home, bin, root, key, budget, realNpx, rows
     mkdirSync(folder, { recursive: true });
     writeFileSync(join(folder, 'package.json'), JSON.stringify({ name: '@counterfact-labs/cli', version: '0.0.0' }));
     cpSync(example, folder, { recursive: true });
-    const cli = backend === 'claude' ? pluginCli(home) : '@counterfact-labs/cli@latest';
+    const launch = backend === 'claude' ? pluginCli(home) : { pin: '@counterfact-labs/cli@latest', args: ['-y', '@counterfact-labs/cli@latest', 'mcp'] };
     bridge = await startBridge({ key, budget, folder, free: true });
     const env = environment(home, bin, backend, bridge, realNpx);
     try {
-      const result = await probeMcp(join(bin, 'npx'), ['-y', cli, 'mcp'], { env, cwd: folder, signal: cancellation.signal });
+      const result = await probeMcp(join(bin, 'npx'), launch.args, { env, cwd: folder, signal: cancellation.signal });
       add('MCP package startup', { pass: true, reason: `Initialized ${result.server.name} ${result.server.version} inside @counterfact-labs/cli` });
       add('sign-in', { pass: !result.status.isError && result.status.structuredContent?.signedIn === true,
         reason: result.status.structuredContent?.signedIn === true ? 'Signed in' : 'Sign-in status did not confirm signed in' });
@@ -225,7 +248,7 @@ async function freeProbes({ backend, home, bin, root, key, budget, realNpx, rows
     try {
       const preload = fileURLToPath(new URL('./live-agent-preload.mjs', import.meta.url));
       const result = await overCapProbe({
-        run: args => capture(realNpx, ['-y', cli, ...args], {
+        run: args => capture(realNpx, [...launch.args.slice(0, -1), ...args], {
           env: { ...env, NODE_OPTIONS: `${env.NODE_OPTIONS ?? ''} --import=${preload}` }, cwd: folder, signal: cancellation.signal,
         }), safe: () => !bridge.state.failures.length && !bridge.state.reservations.size &&
           bridge.state.reservationRequests <= 1 && !bridge.state.receipts.length,
@@ -296,15 +319,21 @@ async function main() {
           const env = environment(home, bin, backend, bridge, realNpx);
           const [command, args] = commands(backend).at(-1);
           const output = await runCommand(command, args, env, folder, config.seconds, bridge.signal);
-          const receipt = validate(backend, output, bridge.state);
+          const receipt = validate(backend, output, bridge.state, spec.id);
           const result = bridge.state.results[0];
           const text = result.content.filter(item => item.type === 'text').map(item => item.text).join('\n');
           row = { pass: true, ...receipt };
-          row = { ...row, ...assertCase(spec.id, { findings: bridge.state.findings,
+          row = { ...row, ...assertCase(spec.id, { findings: bridge.state.findings, credentialRefused: receipt.credentialRefused,
+            credentialMessageAvailable: receipt.credentialMessageAvailable,
             coverageSupported: bridge.state.coverageSupported || Object.hasOwn(result.structuredContent, 'coverage'), coverage: result.structuredContent.coverage, text }) };
         } catch (error) { row = { ...row, pass: false, reason: error.message.startsWith(spec.id + ':') ? error.message : `${spec.id}: ${error.message}` }; }
         finally {
           await bridge?.close();
+          // A later MCP/agent/assertion failure cannot erase a verified paid save.
+          if (bridge?.state.receipts.length === 1) {
+            const saved = bridge.state.receipts[0];
+            row = { ...saved, url: `${consoleOrigin}/projects/${saved.projectId}/findings`, provider: 'not reported', ...row };
+          }
           if (bridge?.state.failures.length) row = { ...row, pass: false, reason: `${spec.id}: ${bridge.state.failures.join('; ')}` };
           rmSync(join(root, backend, spec.id), { recursive: true, force: true });
         }
