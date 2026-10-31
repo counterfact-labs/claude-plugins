@@ -8,6 +8,14 @@ function run(id, findings, extra = {}) {
   assert.equal(typeof suite.assertCase, 'function', 'case assertions must exist');
   return suite.assertCase(id, { findings, ...extra });
 }
+test('convention tools fixture exposes its handler to discovery and retains both planted assertions', () => {
+  const spec = suite.cases.find(c => c.id === 'tools-agent');
+  assert.ok(spec.files.includes('tools.ts'), 'A convention tool source must use the supported tools.ts basename');
+  const schema = JSON.parse(readFileSync(new URL('./fixtures/live-agent-tools/tools.json', import.meta.url), 'utf8'));
+  assert.equal(schema[0].implementation, 'tools.ts#deleteShipment');
+  assert.match(run('tools-agent', [finding('tools.json', 5), finding('tools.ts', 3)]).reason, /cited/);
+  assert.throws(() => run('tools-agent', [finding('tools.json', 5)]), /tools.ts:3/);
+});
 test('four tiny fixture cases keep the original clean prompt and no expected answer snapshots', () => {
   assert.equal(typeof suite.cases, 'object', 'suite must define the four cases');
   assert.deepEqual(suite.cases.map(c => c.id), cases);
@@ -31,9 +39,9 @@ test('clean requires coverage in the returned result when the CLI advertises it'
 for (const [id, path, line] of [
   ['planted-authority', 'system_prompt.md', 6],
   ['tools-agent', 'tools.json', 5],
-  ['tools-agent', 'tools.js', 3],
+  ['tools-agent', 'tools.ts', 3],
 ]) {
-  const other = id === 'tools-agent' ? [finding(path === 'tools.js' ? 'tools.json' : 'tools.js', path === 'tools.js' ? 5 : 3)] : [];
+  const other = id === 'tools-agent' ? [finding(path === 'tools.ts' ? 'tools.json' : 'tools.ts', path === 'tools.ts' ? 5 : 3)] : [];
   test(`${id} requires the planted ${path}:${line}, including when only the other flaw is found`, () => {
     const expected = new RegExp(`${id}.*${path.replace('.', '\\.')}[: ]${line}`);
     assert.throws(() => run(id, other), expected);

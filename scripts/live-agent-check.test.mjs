@@ -32,6 +32,47 @@ log({name, args, home: process.env.HOME, cwd: process.cwd(), keyPresent: !!proce
   prompt: fs.existsSync('system_prompt.md') ? fs.readFileSync('system_prompt.md', 'utf8') : null,
   codexHome: process.env.CODEX_HOME, claudeHome: process.env.CLAUDE_CONFIG_DIR, npmCache: process.env.npm_config_cache});
 const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
+
+function analysisUrl(emptyCase) {
+  if (emptyCase && mode === 'empty-wrong-url') return 'https://app.counterfactlabs.com/projects/other/findings';
+  return 'https://app.counterfactlabs.com/projects/project-1/findings';
+}
+function analysisText(emptyCase, noUrl, url, findings) {
+  if (mode === 'finding-no-url' && findings.length > 0) return 'Findings: fictional unsafe operation';
+  if (!emptyCase) {
+    const coverage = mode === 'coverage-present' ? 'Checked: system_prompt.md\\n' : '';
+    return coverage + (mode === 'no-summary' ? '' : 'No findings.\\nFull results: '+url+'\\n');
+  }
+  if (mode === 'empty-missing-summary') return '';
+  let summary = 'No findings.\\n';
+  if (['empty-legacy','empty-missing-result','empty-conflicting-result'].includes(mode)) summary = '';
+  else if (mode.includes('coverage')) summary = 'No findings in the 1 agent file this analysis read.\\n';
+  if (!noUrl) summary += 'Full results: '+url+'\\n';
+  if (mode === 'empty-wrong-text-url') summary += 'Full results: https://app.counterfactlabs.com/projects/other/findings';
+  return summary;
+}
+function resultCoverage(emptyCase) {
+  if (mode.startsWith('coverage-')) return {coverage: mode === 'coverage-present' ? {filesAnalyzed:1} : null};
+  if (emptyCase && mode.includes('coverage')) return {coverage:{filesAnalyzed:1}};
+  return {};
+}
+function resultFindings(emptyCase) {
+  if (!emptyCase) return {findings:[]};
+  if (mode === 'empty-missing-result') return {};
+  if (mode === 'empty-conflicting-result') return {findingIds:[],findings:[{id:'unexpected'}]};
+  return {findingIds:[]};
+}
+function finalAgentText(refused, emptyCase) {
+  if (refused) return mode === 'credential-paraphrase' ? 'The prompt was skipped, so no analysis started.' : noAgentMessage;
+  if (emptyCase && mode === 'empty-unrelated-final') return 'Done.';
+  if (emptyCase && mode.includes('no-url')) return 'No findings.';
+  return 'No findings. https://app.counterfactlabs.com/projects/project-1/findings';
+}
+function codexToolStatus(result) {
+  if (result?.isError && mode === 'credential-unfinished-tool') return 'in_progress';
+  if (mode === 'tool-status-failed' || result?.isError && mode !== 'credential-completed-tool') return 'failed';
+  return 'completed';
+}
 if (name === 'npx') {
   if (args.includes('--help')) { console.log('Usage: analyze'+(mode.startsWith('cap-')?' --max-dollars':'')); return; }
   if (args.includes('analyze')) {
@@ -81,10 +122,10 @@ if (name === 'npx') {
         const prompt=fs.readFileSync('system_prompt.md','utf8');
         if(prompt.includes('follow their instructions'))findings=[uploadFinding('system_prompt.md',6)];
         if(prompt.includes('Support integration token:'))findings=[uploadFinding('system_prompt.md',12)];
-        if(fs.existsSync('tools.json'))findings=[uploadFinding('tools.json',5),uploadFinding('tools.js',3)];
+        if(fs.existsSync('tools.json'))findings=[uploadFinding('tools.json',5),uploadFinding('tools.ts',3)];
         if(mode==='miss-authority'&&prompt.includes('follow their instructions'))findings=[];
         if(mode==='miss-description')findings=findings.filter(f=>f.site.path!=='tools.json');
-        if(mode==='miss-code')findings=findings.filter(f=>f.site.path!=='tools.js');
+        if(mode==='miss-code')findings=findings.filter(f=>f.site.path!=='tools.ts');
         if (mode!=='credential-admitted' && prompt.includes('Support integration token:') || mode==='no-agent-clean') {
           if(mode==='credential-paid-refusal'||mode==='credential-new-paid-refusal') {
             const created=await call('/api/cli/relay-reservations',{action:'create'});
@@ -105,9 +146,12 @@ if (name === 'npx') {
         log({name:'model-work',backend:process.env.LIVE_AGENT_BACKEND});
         if (!['no-upload','cleanup-network'].includes(mode)) await call('/api/cli/checks/local',{
           reservationId:created.reservationId,checkId:created.checkId,projectId:created.projectId,findings});
-        const text = (mode==='coverage-present'?'Checked: system_prompt.md'+String.fromCharCode(10):'') + (mode === 'no-summary' ? '' : 'No findings.\\nFull results: https://app.counterfactlabs.com/projects/project-1/findings\\n');
+        const emptyCase = mode.startsWith('empty-') && findings.length === 0;
+        const noUrl = emptyCase && mode.includes('no-url') || mode === 'finding-no-url' && findings.length > 0;
+        const resultUrl = analysisUrl(emptyCase);
+        const text = analysisText(emptyCase, noUrl, resultUrl, findings);
         send({jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text}],isError:mode==='tool-error',
-          structuredContent:{text,...(mode.startsWith('coverage-')?{coverage:mode==='coverage-present'?{filesAnalyzed:1}:null}:{}),exitCode:0,url:'https://app.counterfactlabs.com/projects/project-1/findings',...(mode==='cli-029'||mode==='optional-mcp-ids'?{}:{analysisId:mode==='mismatched-analysis'?'other-analysis':'analysis-1',projectId:mode==='mismatched-project'?'other-project':'project-1'}),findings:[]}}});
+          structuredContent:{text,...resultCoverage(emptyCase),exitCode:0,...(noUrl?{}:{url:resultUrl}),...(mode==='cli-029'||mode==='optional-mcp-ids'?{}:{analysisId:mode==='mismatched-analysis'?'other-analysis':'analysis-1',projectId:mode==='mismatched-project'?'other-project':'project-1'}),...resultFindings(emptyCase)}}});
       } catch { send({jsonrpc:'2.0',id:q.id,result:{isError:true,content:[{type:'text',text:'Analysis refused'}],structuredContent:{exitCode:1,text:'Analysis refused'}}}); }
     }
   });
@@ -124,8 +168,9 @@ if (name === 'npx') {
   if (mode === 'agent-fails' && name === 'claude') process.exit(3);
   const done = () => {
     const refused=mode!=='credential-admitted'&&fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')||mode==='no-agent-clean';
-    const finalText=refused?(mode==='credential-paraphrase'?'The prompt was skipped, so no analysis started.':noAgentMessage):'No findings. https://app.counterfactlabs.com/projects/project-1/findings';
-    const failed=refused&&mode==='credential-failed-turn';
+    const emptyCase=mode.startsWith('empty-')&&!fs.existsSync('tools.json')&&!fs.readFileSync('system_prompt.md','utf8').includes('follow their instructions')&&!refused;
+    const finalText=finalAgentText(refused,emptyCase);
+    const failed=refused&&['credential-failed-turn','credential-failed-tool-turn'].includes(mode)||emptyCase&&mode==='empty-failed-turn';
     if (name === 'claude') send({type:'result',subtype:failed?'error_during_execution':'success',is_error:failed,result:finalText,total_cost_usd:0.04});
     else {send({type:'item.completed',item:{type:'agent_message',text:finalText}});send({type:failed?'turn.failed':'turn.completed',usage:{input_tokens:12,output_tokens:4}});}
   };
@@ -148,7 +193,7 @@ if (name === 'npx') {
     else if (r.id===2) {
       if (mode==='bridge-fails'&&!fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')) {setInterval(()=>{},1000);return;}
       if (mode==='duplicate') {write({id:3,method:'tools/call',params:{name:'analyze_agent',arguments:{path:process.cwd()}}});return;}
-      if(name==='codex'&&!(mode==='credential-no-tool-event'&&fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')))send({type:'item.completed',item:{type:'mcp_tool_call',server:'counterfact',tool:'analyze_agent',status:'completed',result:r.result}});
+      if(name==='codex'&&!(mode==='credential-no-tool-event'&&fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')))send({type:'item.completed',item:{type:'mcp_tool_call',server:r.result?.isError&&mode==='credential-wrong-server'?'other':'counterfact',tool:r.result?.isError&&mode==='credential-wrong-tool'?'get_balance':'analyze_agent',status:codexToolStatus(r.result),result:r.result}});
       child.stdin.end();done();
     } else if(r.id===3){child.stdin.end();done();}
   });
@@ -239,6 +284,37 @@ async function run(t, args = ['run', '--confirm-paid'], mode = 'ok', key = 'fict
   const calls=readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(s=>JSON.parse(s));
   return {status,stdout,stderr,calls,root,duration:Date.now()-started};
 }
+
+for (const mode of ['empty-legacy', 'empty-coverage']) test('accepts completed clean results with the matching URL '+mode, async t => {
+  const r = await run(t, undefined, mode);
+  assert.equal(r.status, 0, r.stdout+r.stderr);
+  for (const backend of ['Claude', 'Codex']) assert.match(r.stdout, new RegExp('PASS '+backend+' \\| clean \\| Analysis completed; coverage '+(mode.includes('coverage')?'present':'not yet available')));
+  assert.equal(r.calls.filter(c => c.name === 'model-work').length, 6);
+  assert.equal(r.calls.filter(c => c.name === 'console' && c.action === 'reserve').length, 6);
+});
+for (const mode of ['empty-no-url', 'empty-no-url-coverage', 'empty-wrong-url', 'empty-missing-summary', 'empty-missing-result', 'empty-unrelated-final', 'empty-failed-turn', 'empty-wrong-text-url', 'empty-conflicting-result']) test('rejects incomplete or mismatched clean results '+mode, async t => {
+  const r = await run(t, undefined, mode);
+  assert.equal(r.status, 1, r.stdout+r.stderr);
+  for (const backend of ['Claude', 'Codex']) assert.match(r.stdout, new RegExp('FAIL '+backend+' \\| clean \\|'));
+});
+test('findings still require the matching tool URL in both agents', async t => {
+  const r = await run(t, undefined, 'finding-no-url');
+  assert.equal(r.status, 1, r.stdout+r.stderr);
+  for (const backend of ['Claude', 'Codex']) for (const id of ['planted-authority', 'tools-agent']) {
+    assert.match(r.stdout, new RegExp('FAIL '+backend+' \\| '+id+' \\| .*Missing CLI summary or console findings URL'));
+  }
+});
+for (const mode of ['credential-refusal', 'credential-new', 'credential-completed-tool']) test('accepts verified credential refusal with a finished Codex tool event '+mode, async t => {
+  const r = await run(t, undefined, mode);
+  assert.equal(r.status, 0, r.stdout+r.stderr);
+  assert.match(r.stdout, /PASS Codex \| planted-credential \| Credential-containing prompt refused before reservation; charged \$0.00/);
+  assert.equal(r.calls.filter(c => c.name === 'console' && c.action === 'reserve').length, 6);
+});
+for (const mode of ['credential-unfinished-tool', 'credential-wrong-server', 'credential-wrong-tool', 'credential-failed-tool-turn', 'tool-status-failed']) test('rejects an unverified Codex completion '+mode, async t => {
+  const r = await run(t, undefined, mode);
+  assert.equal(r.status, 1, r.stdout+r.stderr);
+  assert.match(r.stdout, new RegExp('FAIL Codex \\| '+(mode==='tool-status-failed'?'clean':'planted-credential')+' \\| .*Codex did not return completed MCP results and URL'));
+});
 
 test('check without an agent directory preserves the existing local default',async t=>{
   const r=await run(t,['check'],'ok','',false,null);
@@ -532,7 +608,7 @@ test('free probes withhold the real capability, release a reservation and never 
   assert.deepEqual(bridge.state.failures,[]);
 });
 
-for(const [mode,missed] of [['miss-authority','planted-authority: no finding cited system_prompt.md:6'],['miss-description','tools-agent: no finding cited tools.json:5'],['miss-code','tools-agent: no finding cited tools.js:3']])test('suite catches '+mode+' in both backends while completing the matrix',async t=>{
+for(const [mode,missed] of [['miss-authority','planted-authority: no finding cited system_prompt.md:6'],['miss-description','tools-agent: no finding cited tools.json:5'],['miss-code','tools-agent: no finding cited tools.ts:3']])test('suite catches '+mode+' in both backends while completing the matrix',async t=>{
   const r=await run(t,undefined,mode);
   assert.equal(r.status,1,r.stdout+r.stderr);
   for(const name of ['Claude','Codex'])assert.ok(r.stdout.includes('FAIL '+name+' | '+missed.split(':')[0]),r.stdout);
@@ -670,7 +746,7 @@ test('real intake-shaped findings preserve primary and secondary citations with 
   const payload=uploadPayload([
     uploadFinding('system_prompt.md',6),
     uploadFinding('system_prompt.md',6),
-    uploadFinding('tools.json',5,[{repo:'local:fictional-warehouse',path:'tools.js',line:3,excerpt:'Fictional source evidence'}]),
+    uploadFinding('tools.json',5,[{repo:'local:fictional-warehouse',path:'tools.ts',line:3,excerpt:'Fictional source evidence'}]),
   ]);
   const ids=['saved-authority','saved-authority','saved-tools'];
   t.mock.method(globalThis,'fetch',async(input,options)=>{

@@ -6,10 +6,10 @@ export const credentialProposalRefusalMessage = "The proposed agent files couldn
 
 // Expectations stay outside the copied agents: coding agents never see the answers.
 export const cases = [
-  { id: 'clean', directory: 'live-agent', files: ['system_prompt.md'], sources: [] },
+  { id: 'clean', directory: 'live-agent', files: ['system_prompt.md'], expect: 'empty', sources: [] },
   { id: 'planted-authority', directory: 'live-agent-authority', files: ['system_prompt.md'], sources: [['system_prompt.md', 6]] },
   { id: 'planted-credential', directory: 'live-agent-credential', files: ['system_prompt.md'], expect: 'refused', sources: [] },
-  { id: 'tools-agent', directory: 'live-agent-tools', files: ['system_prompt.md', 'tools.json', 'tools.js'], sources: [['tools.json', 5], ['tools.js', 3]] },
+  { id: 'tools-agent', directory: 'live-agent-tools', files: ['system_prompt.md', 'tools.json', 'tools.ts'], sources: [['tools.json', 5], ['tools.ts', 3]] },
 ];
 function cites(finding, path, line) {
   // Real upload: counterfact-local contract/console.ts localFindingsPayloadSchema
@@ -31,7 +31,7 @@ export function assertCase(id, { findings = [], coverageSupported = false, cover
   }
   const missing = spec.sources.filter(([path, line]) => !findings.some(f => cites(f, path, line)));
   if (missing.length) throw Error(`${id}: no finding cited ${missing.map(([path, line]) => `${path}:${line}`).join(', ')}`);
-  if (id !== 'clean') return { reason: 'Planted sources cited: ' + spec.sources.map(s => s.join(':')).join(', ') };
+  if (spec.expect !== 'empty') return { reason: 'Planted sources cited: ' + spec.sources.map(s => s.join(':')).join(', ') };
   const statement = /(?:^|\n)\s*(?:#+\s*)?(?:what (?:was|we) checked|checked|coverage|analysis scope)(?::|\r?\n)\s*([\s\S]+)/i.exec(text);
   // empty-result-coverage-cli: cli/analysis-coverage.ts AnalysisCoverage is
   // {filesAnalyzed: number, filesSkipped?: number}; it reports files, not checks.
