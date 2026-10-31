@@ -73,7 +73,7 @@ function preview(config) {
   }
   console.log(`\nPer-command deadline: ${config.seconds}s; terminate process groups and remove temporary files on exit or interruption.`);
   console.log('Require MCP initialization, a completed analyze_agent reply, CLI summary, an actual console upload receipt, and the matching URL in the final coding-agent response.');
-  console.log('Cases in BOTH agents: clean (completion and supported coverage), planted-authority (system_prompt.md:6), planted-credential (credential filtering before reservation), tools-agent (tools.json:5 and tools.js:3).');
+  console.log('Cases in BOTH agents: clean (completion and supported coverage), planted-authority (system_prompt.md:6), planted-credential (credential filtering before reservation), tools-agent (tools.json:5 and tools.ts:3).');
   console.log('Free probes every run: sign-in status, installed MCP startup inside package @counterfact-labs/cli, supported over-cap refusal, /setup and README links.');
   console.log('Print one-screen PASS/FAIL rows with duration, estimated/charged Counterfact amount, and provider cost if reported; fail the process if either agent fails.');
 }
@@ -181,7 +181,18 @@ function validateEvidence(state, caseId) {
     throw Error('Missing matching console upload receipt');
   }
   const url = `${consoleOrigin}/projects/${receipt.projectId}/findings`;
-  if (structured.url !== url || !text.includes(url) || !/(?:Findings:|Finding ids:|No findings\.|\d+ findings)/i.test(text)) throw Error('Missing CLI summary or console findings URL');
+  // A verified empty upload plus an explicit empty MCP result is completion.
+  // CLI 0.2.9 prints only the link; newer CLIs also describe the files read.
+  const findingFields = ['findingIds', 'findings'].filter(field => Object.hasOwn(structured, field));
+  const emptyResult = spec?.expect === 'empty' && !state.findings.length && findingFields.length > 0 &&
+    findingFields.every(field => Array.isArray(structured[field]) && !structured[field].length);
+  const textUrls = [...text.matchAll(/Full results:\s*(\S+)/g)].map(match => match[1]);
+  const summary = /(?:Findings:|Finding ids:|No findings\b|\d+ findings)/i.test(text) ||
+    emptyResult && text.includes(`Full results: ${url}`);
+  if (!summary || textUrls.some(value => value !== url) ||
+      structured.url !== url || !text.includes(url)) {
+    throw Error('Missing CLI summary or console findings URL');
+  }
   return { ...receipt, url };
 }
 function validateClaude(events, receipt) {
@@ -196,11 +207,12 @@ function validateClaude(events, receipt) {
 }
 function validateCodex(events, receipt) {
   const completedTool = events.some(event => event.type === 'item.completed' && event.item?.type === 'mcp_tool_call' &&
-    event.item.server === 'counterfact' && event.item.tool === 'analyze_agent' && event.item.status === 'completed');
+    event.item.server === 'counterfact' && event.item.tool === 'analyze_agent' &&
+    (event.item.status === 'completed' || receipt.credentialRefused && event.item.status === 'failed'));
   const completedTurn = events.some(event => event.type === 'turn.completed');
   const failed = events.some(event => event.type === 'turn.failed' || event.type === 'error');
-  const returnedUrl = events.some(event => event.item?.type === 'agent_message' && event.item.text?.includes(receipt.url));
-  if (!completedTool || !completedTurn || failed || !receipt.credentialRefused && !returnedUrl) {
+  const returned = events.some(event => event.item?.type === 'agent_message' && event.item.text?.includes(receipt.url));
+  if (!completedTool || !completedTurn || failed || !receipt.credentialRefused && !returned) {
     throw Error('Codex did not return completed MCP results and URL');
   }
   return { ...receipt, provider: 'not reported' };

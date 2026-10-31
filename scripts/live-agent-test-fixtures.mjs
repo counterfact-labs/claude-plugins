@@ -19,7 +19,7 @@ export function uploadPayload(findings) {
     projectId: '00000000-0000-4000-8000-000000000003',
     agent: { repository: 'local:fictional-warehouse', commit: null,
       files: [{ path: 'system_prompt.md', hash: 'a'.repeat(64) },
-        { path: 'tools.json', hash: 'b'.repeat(64) }, { path: 'tools.js', hash: 'c'.repeat(64) }] },
+        { path: 'tools.json', hash: 'b'.repeat(64) }, { path: 'tools.ts', hash: 'c'.repeat(64) }] },
     bundleVersion: 'test', relayVersion: 'test', counterfactLocalVersion: '0.2.9', findings,
   };
 }
