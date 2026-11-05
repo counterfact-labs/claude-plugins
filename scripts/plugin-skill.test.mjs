@@ -38,7 +38,7 @@ test('/counterfact:counterfact resolves directly to the full workflow in one ski
   assert.match(opening, /privacy explanation below before sign-in/);
   // Pin the full workflow so unrelated authentication instructions cannot drift.
   assert.equal(createHash('sha256').update(body).digest('hex'),
-    '09473fd114a58fe869e89e4f5bc3b9064dd8a1cb84b1721440a4b102eff7b734');
+    'fc20136c120e49f58ff46c5ef2bd1aa20ee438dbf9e6357c0c14a9101a17c9f7');
   assert.match(body, /Pass `proposal` with `agentName` and `files`/);
   assert.match(body, /Never run `counterfact-labs` or `npx @counterfact-labs\/cli` in the shell/);
   assert.match(body, /then list every returned finding as the tool's text lists it, keeping its order and group headings/);

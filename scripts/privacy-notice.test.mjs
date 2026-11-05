@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-// README contracts preserve the approved scope; the skill notice is a new proposal.
+// README contracts preserve the approved scope; the metadata sentence was approved on November 5, 2026.
 const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
 
 test('README includes imported project files in the disclosed scope', () => {
@@ -11,7 +11,7 @@ test('README includes imported project files in the disclosed scope', () => {
 });
 
 test('README names the Counterfact web console as the destination', () => {
-  assert.match(readme, /Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to the Counterfact web console\./);
+  assert.match(readme, /Your sign-in token; your repository's remote address, branch and commit; the agent folder's name and path within the repository, and whether it has uncommitted changes; file names and sizes; and findings with code quotes are sent to the Counterfact web console\./);
   assert.doesNotMatch(readme, /sent to your console/);
 });
 
@@ -20,7 +20,7 @@ test('the skill explains sharing in three sentences before either sign-in flow r
   const notice = text.match(/Before starting sign-in or the first analysis in a conversation, say: "([^"]+)"/)?.[1] ?? '';
   assert.equal(notice.split('.').filter(sentence => sentence.trim()).length, 3);
   assert.match(notice, /An analysis may send the contents of the agent files you choose, the project files they import, and repository-wide files the analysis can read, encrypted to Counterfact's sealed relay/);
-  assert.match(notice, /Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to the Counterfact web console/);
+  assert.match(notice, /Your sign-in token; your repository's remote address, branch and commit; the agent folder's name and path within the repository, and whether it has uncommitted changes; file names and sizes; and findings with code quotes are sent to the Counterfact web console/);
   assert.match(notice, /Secret and ignored files are skipped/);
   assert.ok(text.indexOf('Before starting sign-in or the first analysis in a conversation, say:') < text.indexOf('1. Inspect the available Counterfact tool schemas.'));
   assert.match(text, /regardless of `analyzeToolAllowed`/);
