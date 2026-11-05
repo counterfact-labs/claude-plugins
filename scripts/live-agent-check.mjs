@@ -46,6 +46,8 @@ function prompt(backend) {
     'Analyze the fictional agent in the current folder with Counterfact exactly once. ' +
     'Use the Counterfact MCP tools' + (backend === 'claude' ? ' and the installed Counterfact skill' : '') + '. ' +
     'Sign-in is configured and analysis permission is granted for this release analysis. Decline any waiting fixes. ' +
+    'Yes: send the files shown by preview_analysis for this one analysis. ' +
+    'If preview_analysis is unavailable, yes: send the proposed files, any project files they import, and repository-wide files the analysis can read for this one analysis. ' +
     'Use path "."; do not change files, use shell commands, inspect credentials or environment, sign in again, retry, or run additional analyses. ' +
     'Wait for completion and return the CLI summary and full console findings URL from the tool result. If anything fails, report the failure.';
 }

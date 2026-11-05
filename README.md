@@ -42,7 +42,7 @@ default_tools_approval_mode = "approve"
 `default_tools_approval_mode = "approve"` lets Codex call Counterfact's tools, including the paid `analyze_agent`, without asking each time.
 Then ask Codex to analyze your agent.
 
-The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to the Counterfact web console.
+The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token; your repository's remote address, branch and commit; the agent folder's name and path within the repository, and whether it has uncommitted changes; file names and sizes; and findings with code quotes are sent to the Counterfact web console.
 
 Counterfact keeps the findings from each analysis until it or the workspace is deleted. See the [command-line package](https://www.npmjs.com/package/@counterfact-labs/cli) for commands and privacy details, and the [Counterfact setup page](https://counterfactlabs.com/setup) for Codex setup.
 

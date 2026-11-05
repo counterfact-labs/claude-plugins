@@ -25,6 +25,8 @@ function skillTools(directory, tools = new Set()) {
 async function main() {
   const { command, args, version } = cliPin(root);
   const required = skillTools(join(root, 'skills'));
+  // CLI 0.2.9 predates previews; any newer pin must expose the referenced tool.
+  if (version === '0.2.9') required.delete('preview_analysis');
   if (!required.size) throw new Error('No required tool names found in skills.');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid smoke timeout.');
 

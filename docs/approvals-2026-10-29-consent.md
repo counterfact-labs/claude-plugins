@@ -22,7 +22,7 @@ Approved:
 
 > Only the agent files you choose, and the project files they import, are sent. Secret and ignored files are skipped.
 
-README.md, privacy paragraph, and skills/counterfact-analyze/SKILL.md, permission notice destination.
+README.md, privacy paragraph, and skills/counterfact-analyze/SKILL.md, permission notice destination. The metadata sentence in the approved passages below reflects Arya's November 5, 2026 revision, recorded in docs/consent-wording-audit.md.
 
 Was:
 
@@ -30,7 +30,7 @@ Was:
 
 Approved:
 
-> Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to the Counterfact web console.
+> Your sign-in token; your repository's remote address, branch and commit; the agent folder's name and path within the repository, and whether it has uncommitted changes; file names and sizes; and findings with code quotes are sent to the Counterfact web console.
 
 skills/counterfact-analyze/SKILL.md, complete permission notice instruction and attribution.
 
@@ -40,6 +40,6 @@ Was:
 
 Approved:
 
-> If `analyzeToolAllowed` is false and you haven't asked in this conversation, first state Counterfact's privacy notice: "Counterfact says: The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to the Counterfact web console. Only the agent files you choose, and the project files they import, are sent. Secret and ignored files are skipped."
+> If `analyzeToolAllowed` is false and you haven't asked in this conversation, first state Counterfact's privacy notice: "Counterfact says: The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token; your repository's remote address, branch and commit; the agent folder's name and path within the repository, and whether it has uncommitted changes; file names and sizes; and findings with code quotes are sent to the Counterfact web console. Only the agent files you choose, and the project files they import, are sent. Secret and ignored files are skipped."
 
 The privacy scope, console name, and Counterfact's privacy notice attribution above were approved by Arya on October 29, 2026. Retention remains unchanged.
