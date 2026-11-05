@@ -48,7 +48,7 @@ input.on('line', line => {
       if (message.method === 'tools/call') {
         if (message.params?.name === 'analyze_agent') {
           await event('/begin', message.params.arguments ?? {});
-        } else if (!['sign_in_status', 'get_balance', 'get_finding', 'waiting_fixes'].includes(message.params?.name)) {
+        } else if (!['sign_in_status', 'get_balance', 'get_finding', 'waiting_fixes', 'preview_analysis'].includes(message.params?.name)) {
           const name = message.params?.name;
           refusal = `Refused MCP tool: ${typeof name === 'string' ? name.slice(0, 80) : '(missing name)'}`;
           throw new Error('Unexpected tool');

@@ -13,9 +13,10 @@ const server = `#!${process.execPath}
 const { createInterface } = require('node:readline');
 const assert = require('node:assert/strict');
 const mode = process.env.FAKE_MCP_MODE;
+const version = mode === 'legacy' ? '0.2.9' : '1.2.3';
 assert.deepEqual(process.argv.slice(2), mode === 'prefixed'
   ? ['-y', '--prefix=' + process.cwd(), '@counterfact-labs/cli@1.2.3', 'mcp']
-  : ['-y', '@counterfact-labs/cli@1.2.3', 'mcp']);
+  : ['-y', '@counterfact-labs/cli@' + version, 'mcp']);
 if (mode === 'unpublished') process.exit(1);
 if (mode === 'hang') setInterval(() => {}, 1000);
 let initialized = false;
@@ -40,7 +41,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     });
     send(request.id, {
       protocolVersion: '2024-11-05', capabilities: { tools: {} },
-      serverInfo: { name: 'fixture', version: mode === 'wrong-version' ? '1.2.2' : '1.2.3' },
+      serverInfo: { name: 'fixture', version: mode === 'wrong-version' ? '1.2.2' : version },
     });
   } else if (request.method === 'notifications/initialized') {
     initialized = true;
@@ -136,8 +137,27 @@ test('discovers new skill tool references rather than using a fixed tool allowli
   assert.match(result.stderr, /Missing.*new_tool/);
 });
 
+test('an older CLI can omit preview_analysis while the skill retains its proposal and balance fallback', (t) => {
+  const result = run(t, 'legacy', 'Use `get_finding` and `analyze_agent`. If available, call `preview_analysis`; otherwise show proposed files and balance.', ['-y', '@counterfact-labs/cli@0.2.9', 'mcp']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /2 required tools/);
+});
+
+test('an optional preview reference cannot hide a missing required tool', (t) => {
+  const result = run(t, 'ok', 'Use `get_finding`, `analyze_agent`, and `new_tool`. If available, call `preview_analysis`.');
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Missing.*new_tool/);
+  assert.match(result.stderr, /Missing.*preview_analysis/);
+});
+
 test('fails closed when the skill names no tools', (t) => {
   const result = run(t, 'ok', 'No tools documented.');
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /No.*tool/);
+});
+
+test('a newer CLI pin must expose preview_analysis when the skill names it', (t) => {
+  const result = run(t, 'ok', 'Use `get_finding`, `analyze_agent`, and `preview_analysis`.');
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Missing required MCP tools: preview_analysis/);
 });
