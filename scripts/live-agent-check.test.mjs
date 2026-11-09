@@ -98,8 +98,12 @@ if (name === 'npx') {
     if (q.method === 'initialize') {
       send({jsonrpc:'2.0',id:q.id,result:{serverInfo:{name:'counterfact-labs',version:args.find(a=>a.startsWith('@counterfact-labs/cli@')).split('@').at(-1)}}});
     } else if (q.method === 'tools/list') {
-      send({jsonrpc:'2.0',id:q.id,result:{tools:[{name:'analyze_agent',description:'Analyze',inputSchema:{type:'object'}},{name:'sign_in_status',inputSchema:{type:'object'}}]}});
+      send({jsonrpc:'2.0',id:q.id,result:{tools:[...(mode==='with-preview'?[{name:'preview_analysis',inputSchema:{type:'object'}}]:[]),{name:'analyze_agent',description:'Analyze',inputSchema:{type:'object'}},{name:'sign_in_status',inputSchema:{type:'object'}}]}});
     } else if (q.method === 'tools/call') {
+      if(q.params.name==='preview_analysis') {
+        log({name:'preview',args:q.params.arguments});
+        send({jsonrpc:'2.0',id:q.id,result:{content:[],structuredContent:{files:[{path:'system_prompt.md',bytes:16,role:'prompt'}],totalBytes:16,cost:{free:false,balanceUsd:12},notices:[]}}});return;
+      }
       if(q.params.name==='sign_in_status') {
         if(mode==='free-bridge-refusal')await fetch('https://app.counterfactlabs.com/api/cli/checks/local',{method:'POST',body:'{}'});
         if(mode==='free-console-refusal')await fetch('https://app.counterfactlabs.com/api/cli/balance');
@@ -199,7 +203,11 @@ if (name === 'npx') {
   createInterface({input:child.stdout}).on('line',line=>{
     const r=JSON.parse(line);
     if (r.id===1) {write({method:'notifications/initialized'});write({id:4,method:'tools/list'});}
-    else if(r.id===4) {write({id:2,method:'tools/call',params:{name:mode.startsWith('disallowed-')?mode.slice('disallowed-'.length):'analyze_agent',arguments:{path:process.cwd(),...(name==='claude'?{proposal:{agentName:'Paper shop assistant',files:[{path:['credential-invalid-proposal','credential-new-invalid-proposal'].includes(mode)?'../outside.md':mode==='credential-unrelated-proposal'?'other.md':mode==='credential-relative-proposal'?'./system_prompt.md':'system_prompt.md',role:'prompt'}]}}:{})}}});}
+    else if(r.id===4) {
+      if(mode==='with-preview')write({id:5,method:'tools/call',params:{name:'preview_analysis',arguments:{path:process.cwd()}}});
+      else writeAnalysis();
+    }
+    else if(r.id===5) {if(r.error) {child.stdin.end();return;} writeAnalysis();}
     else if (r.id===2) {
       if (mode==='bridge-fails'&&!fs.readFileSync('system_prompt.md','utf8').includes('Support integration token:')) {setInterval(()=>{},1000);return;}
       if (mode==='duplicate') {write({id:3,method:'tools/call',params:{name:'analyze_agent',arguments:{path:process.cwd()}}});return;}
@@ -207,6 +215,7 @@ if (name === 'npx') {
       child.stdin.end();done();if((mode==='refusal-agent-exit'||mode.endsWith('-agent-exit'))&&r.result?.isError)process.exitCode=3;
     } else if(r.id===3){child.stdin.end();done();}
   });
+  function writeAnalysis() {write({id:2,method:'tools/call',params:{name:mode.startsWith('disallowed-')?mode.slice('disallowed-'.length):'analyze_agent',arguments:{path:process.cwd(),...(name==='claude'?{proposal:{agentName:'Paper shop assistant',files:[{path:['credential-invalid-proposal','credential-new-invalid-proposal'].includes(mode)?'../outside.md':mode==='credential-unrelated-proposal'?'other.md':mode==='credential-relative-proposal'?'./system_prompt.md':'system_prompt.md',role:'prompt'}]}}:{})}}});}
   write({id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name,version:'1'}}});
 }
 `;
@@ -1003,4 +1012,25 @@ test('published CLI reply shapes, installed prefix and npm block work together',
   assert.equal(r.status,0,r.stdout+r.stderr);
   assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
   assert.equal(r.stdout.split('\n').filter(line=>/^PASS (Claude|Codex) \| (clean|planted-authority|planted-credential|tools-agent) \|/.test(line)).length,8);
+});
+
+test('the live adapter forwards preview_analysis before the single permitted analysis', async t => {
+  const r = await run(t, undefined, 'with-preview');
+  assert.equal(r.status, 0, r.stdout+r.stderr);
+  assert.equal(r.calls.filter(call => call.name === 'preview').length, 8);
+  assert.equal(r.calls.filter(call => call.name === 'console' && call.action === 'reserve').length, 6);
+  assert.equal(r.calls.filter(call => call.name === 'model-work').length, 6);
+});
+
+// Check mode prints the actual prompts and launches no paid or live calls.
+test('both headless prompts explicitly answer yes to either file-sharing question', async t => {
+  const r = await run(t, ['check'], 'ok', '');
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls, []);
+  const prompts = r.stdout.match(/(?:claude -p|codex exec)[\s\S]*?(?=\ncodex:|\nPer-command deadline:)/g) ?? [];
+  assert.equal(prompts.length, 2);
+  for (const prompt of prompts) {
+    assert.ok(prompt.includes('Yes: send the files shown by preview_analysis for this one analysis.'), prompt);
+    assert.ok(prompt.includes('If preview_analysis is unavailable, yes: send the proposed files, any project files they import, and repository-wide files the analysis can read for this one analysis.'), prompt);
+  }
 });

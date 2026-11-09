@@ -22,9 +22,14 @@ function skillTools(directory, tools = new Set()) {
   return tools;
 }
 
+const CLIS_WITHOUT_PREVIEW_TOOL = new Set(['0.2.9', '0.2.11']);
+
 async function main() {
   const { command, args, version } = cliPin(root);
   const required = skillTools(join(root, 'skills'));
+  // CLI 0.2.9 predates previews, and 0.2.11 offers its preview only in the terminal;
+  // the skill falls back to proposed files for both. Any other pin must expose the tool.
+  if (CLIS_WITHOUT_PREVIEW_TOOL.has(version)) required.delete('preview_analysis');
   if (!required.size) throw new Error('No required tool names found in skills.');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid smoke timeout.');
 

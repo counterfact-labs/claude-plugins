@@ -23,7 +23,7 @@ The plugin uses `https://app.counterfactlabs.com` by default. Run the login comm
 
 When you ask for an analysis, Claude runs it; a new workspace's first analysis is free, and later analyses are charged to your balance. If your balance doesn't cover it, Claude shows a link to top up; prices are on the top-up page. After results, Claude shows the full-results link and every finding, then offers to fix the most serious finding, preferring ones that affect the agent's users. It uses the finding's explanation, quoted lines, and suggested fixes. After edits, it suggests an analysis and waits for you to ask for it.
 
-The plugin starts `npx -y --prefix="${CLAUDE_PLUGIN_ROOT}" @counterfact-labs/cli@0.2.9 mcp` on your computer (an exact version, updated when the plugin adopts a new CLI release) and allows up to 15 minutes per tool call. Cancelling the tool call or reaching that limit stops the analysis. If an analysis is stopped before it finishes, run it again. Results appear on the project's findings page at the link Claude shows. The plugin version also advances for skill changes without changing the CLI pin, so `claude plugin update counterfact@counterfact-labs` picks up those releases.
+The plugin starts `npx -y --prefix="${CLAUDE_PLUGIN_ROOT}" @counterfact-labs/cli@0.2.11 mcp` on your computer (an exact version, updated when the plugin adopts a new CLI release) and allows up to 15 minutes per tool call. Cancelling the tool call or reaching that limit stops the analysis. If an analysis is stopped before it finishes, run it again. Results appear on the project's findings page at the link Claude shows. The plugin version also advances for skill changes without changing the CLI pin, so `claude plugin update counterfact@counterfact-labs` picks up those releases.
 
 ## Codex
 
@@ -33,7 +33,7 @@ Add these lines to `~/.codex/config.toml` to connect the Counterfact MCP server.
 ```toml
 [mcp_servers.counterfact]
 command = "npx"
-args = ["-y", "@counterfact-labs/cli@0.2.9", "mcp"]
+args = ["-y", "@counterfact-labs/cli@0.2.11", "mcp"]
 startup_timeout_sec = 120
 tool_timeout_sec = 900
 default_tools_approval_mode = "approve"
@@ -42,7 +42,7 @@ default_tools_approval_mode = "approve"
 `default_tools_approval_mode = "approve"` lets Codex call Counterfact's tools, including the paid `analyze_agent`, without asking each time.
 Then ask Codex to analyze your agent.
 
-The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token, repository facts, file names and sizes, and findings with code quotes are sent to the Counterfact web console.
+The analysis runs on your computer. Model requests go encrypted to Counterfact's sealed relay, which we can't read into. Your sign-in token; your repository's remote address, branch and commit; the agent folder's name and path within the repository, and whether it has uncommitted changes; file names and sizes; and findings with code quotes are sent to the Counterfact web console.
 
 Counterfact keeps the findings from each analysis until it or the workspace is deleted. See the [command-line package](https://www.npmjs.com/package/@counterfact-labs/cli) for commands and privacy details, and the [Counterfact setup page](https://counterfactlabs.com/setup) for Codex setup.
 
