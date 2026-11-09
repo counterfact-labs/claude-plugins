@@ -180,7 +180,7 @@ After sign-in and before each analysis, call `get_balance`. When `preview_analys
 - Option A returns files (path, bytes, role), totalBytes, cost (free and optional balanceUsd), and notices without an estimate.
   The may-send list includes repository-wide files available to the local reader. Results list only the files actually sent,
   a subset of the preview. Preview bytes mean file size; result bytes mean bytes actually sent.
-- The release smoke exception is limited to the current 0.2.9 pin. Newer pins require preview_analysis, so losing it fails smoke.
+- The release smoke exception is limited to the 0.2.9 and 0.2.11 pins (0.2.11 offers its preview only in the terminal; the owner decided on 2026-11-09 to ship it with the proposed-files fallback and add the tool in 0.2.12). Newer pins require preview_analysis, so losing it fails smoke.
 - Offline integration uses an in-memory MCP fake and explicit scripted turns. It checks the skill's order: the privacy notice
   precedes sign-in, then balance and preview precede the file list and consent question, and analysis follows explicit consent.
   Scripted replay is not evidence of live model compliance. No real coding agent or model was run.
