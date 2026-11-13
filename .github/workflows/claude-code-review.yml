@@ -1,0 +1,41 @@
+name: Claude Code Review
+
+# Automatically review every pull request with Claude Code's code-review skill.
+# Setup (both required):
+#   1. Add the repository secret ANTHROPIC_API_KEY (Settings -> Secrets and
+#      variables -> Actions).
+#   2. Install the Claude GitHub app: https://github.com/apps/claude
+#      The app provides the token and the MCP tools the code-review skill uses to
+#      post inline review comments; without it the skill runs but cannot post.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write  # required by claude-code-action for OIDC token exchange
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Claude code review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
+          plugins: "code-review@claude-code-plugins"
+          prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
+          claude_args: "--max-turns 20"
