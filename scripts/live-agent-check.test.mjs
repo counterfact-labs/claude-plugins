@@ -503,6 +503,7 @@ test('check without an agent directory preserves the existing local default',asy
   assert.deepEqual(r.calls,[]);
   assert.match(r.stdout,/Copy \S*scripts\/fixtures\/live-agent separately/);
   assert.match(r.stdout,/Total Counterfact analysis estimate cap: \$15\.00\. Per-analysis ceiling \$5\.00; up to six analyses\./);
+  assert.ok(r.stdout.includes('tools-agent (tools.json:5 required; tools.ts:3 informational)'),r.stdout);
 });
 
 test('custom agent directory is previewed and copied independently for both providers',async t=>{
@@ -816,11 +817,26 @@ test('free probes withhold the real capability, release a reservation and never 
   assert.deepEqual(bridge.state.failures,[]);
 });
 
-for(const [mode,missed] of [['miss-authority','planted-authority: no finding cited system_prompt.md:6'],['miss-description','tools-agent: no finding cited tools.json:5'],['miss-code','tools-agent: no finding cited tools.ts:3']])test('suite catches '+mode+' in both backends while completing the matrix',async t=>{
+for(const [mode,missed] of [['miss-authority','planted-authority: no finding cited system_prompt.md:6'],['miss-description','tools-agent: no finding cited tools.json:5']])test('suite catches '+mode+' in both backends while completing the matrix',async t=>{
   const r=await run(t,undefined,mode);
   assert.equal(r.status,1,r.stdout+r.stderr);
   for(const name of ['Claude','Codex'])assert.ok(r.stdout.includes('FAIL '+name+' | '+missed.split(':')[0]),r.stdout);
   assert.ok(r.stdout.includes(missed),r.stdout);
+  assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
+});
+for(const [mode,reason] of [
+  ['ok','Planted sources cited: tools.json:5; also cited tools.ts:3'],
+  ['miss-code','Planted sources cited: tools.json:5; tools.ts:3 not cited'],
+])test('tools-agent passes with informational tool source status: '+mode,async t=>{
+  const r=await run(t,undefined,mode);
+  assert.equal(r.status,0,r.stdout+r.stderr);
+  const summary=readFileSync(join(r.root,'summary.md'),'utf8');
+  for(const name of ['Claude','Codex']) {
+    const row=r.stdout.split('\n').find(line=>line.startsWith('PASS '+name+' | tools-agent | '));
+    assert.equal(row?.split('; estimate ')[0],'PASS '+name+' | tools-agent | '+reason);
+    const summaryRow=summary.split('\n').find(line=>line.startsWith('| '+name+' | tools-agent | '));
+    assert.equal(summaryRow?.split('; estimate ')[0],'| '+name+' | tools-agent | PASS | '+reason);
+  }
   assert.equal(r.calls.filter(c=>c.name==='model-work').length,6);
 });
 test('all eight cases produce rows and the job summary; free startup uses the plugin pin under the CLI package name',async t=>{

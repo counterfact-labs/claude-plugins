@@ -76,7 +76,7 @@ function preview(config) {
   }
   console.log(`\nPer-command deadline: ${config.seconds}s; terminate process groups and remove temporary files on exit or interruption.`);
   console.log('Require MCP initialization, a completed analyze_agent reply, CLI summary, an actual console upload receipt, and the matching URL in the final coding-agent response.');
-  console.log('Cases in BOTH agents: clean (completion and supported coverage), planted-authority (system_prompt.md:6), planted-credential (credential filtering before reservation), tools-agent (tools.json:5 and tools.ts:3).');
+  console.log('Cases in BOTH agents: clean (completion and supported coverage), planted-authority (system_prompt.md:6), planted-credential (credential filtering before reservation), tools-agent (tools.json:5 required; tools.ts:3 informational).');
   console.log('Free probes every run: sign-in status, installed MCP startup inside package @counterfact-labs/cli, supported over-cap refusal, /setup and README links.');
   console.log('Print one-screen PASS/FAIL rows with duration, estimated/charged Counterfact amount, and provider cost if reported; fail the process if either agent fails.');
 }
