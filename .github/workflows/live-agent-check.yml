@@ -7,18 +7,30 @@
 # Free every run: sign-in, MCP startup from package @counterfact-labs/cli, supported
 # over-cap refusal, /setup (not-yet-live allowed) and README links.
 # Launches: published plugin release, manual dispatch, nightly at 03:23 Pacific,
-# and hourly npm version + public production /api/health revision polling (no cross-repo token).
+# and hourly polling of npm latest, console /api/health revision, the production
+# relay release and the plugin CLI pin in .mcp.json (no cross-repo token).
+# Relay identity: POST https://relay.counterfactlabs.com:8443/health, version 2;
+# compare release.{releaseId,relayVersion,bundleVersion,workloadPolicySha256}.
+# Challenges, boot IDs and evidence change without a release and are not cached.
 # UTC candidates 10:23 (PDT) and 11:23 (PST); gate by America/Los_Angeles to follow DST.
-# Cache BOTH last attempted identities even after failure; hourly unchanged polls skip.
+# Extend the same two last-attempt files: last-version holds npm latest + plugin pin;
+# last-revision holds console revision + relay release JSON (one value per line).
+# Cache attempted identities even after failure; hourly unchanged polls skip.
 # Restore and compare again under the paid lock so queued hourly polls do not repeat.
-# The v2 cache starts empty: the first hourly poll after merge launches the suite
+# Old one-line v2 entries lack the new identities: the first hourly poll launches
 # (about $12). GitHub keeps only one pending job per group: a changed hourly poll
 # may replace a pending nightly/release job, then skip after refreshing identities.
 # Nightly/manual/release runs always retry. Tag-ref caches cannot be read by scheduled
-# runs, so a later hourly poll may repeat a release run. Only paid jobs join concurrency.
+# runs, so a later hourly poll may repeat a release run. Only paid jobs join the paid lock.
+# A separate job with issues: write opens/comments on "Live agent check failed"
+# after poll or live-job failure, using only redacted FAIL rows (no raw logs).
+# The next completed, fully passing suite comments PASS rows and closes the issue;
+# unchanged polls, skipped analyses and cancelled runs cannot resolve an incident.
+# Alerts use a separate lock; recovery cannot close an incident updated after the
+# passing check finished, even if its alert was delayed while waiting for a runner.
 # Secrets: ANTHROPIC_API_KEY, OPENAI_API_KEY, COUNTERFACT_LIVE_TEST_KEY; never print values.
 # Offline preview: scripts/live-agent-check.sh check. Offline tests (PyYAML required):
-# node --test --test-concurrency=4 scripts/live-agent-{cases,check,gitleaks,probes,workflow}.test.mjs
+# node --test --test-concurrency=4 scripts/*.test.mjs
 
 name: Live agent release analysis
 
@@ -43,6 +55,8 @@ jobs:
       run: ${{ steps.cli.outputs.run }}
       version: ${{ steps.cli.outputs.version }}
       revision: ${{ steps.cli.outputs.revision }}
+      relay: ${{ steps.cli.outputs.relay }}
+      plugin: ${{ steps.cli.outputs.plugin }}
     defaults:
       run:
         shell: bash
@@ -75,6 +89,11 @@ jobs:
         with:
           node-version: '22'
 
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: steps.credentials.outputs.ready == 'true'
+        with:
+          persist-credentials: false
+
       - name: Restore last attempted CLI version
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         if: steps.credentials.outputs.ready == 'true'
@@ -85,7 +104,7 @@ jobs:
           key: live-agent-releases-v2-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: live-agent-releases-v2-
 
-      - name: Compare CLI version and production revision
+      - name: Compare CLI, plugin, console and relay release identities
         id: cli
         if: steps.credentials.outputs.ready == 'true'
         timeout-minutes: 2
@@ -129,17 +148,50 @@ jobs:
             echo '::warning::Production revision unavailable; continuing the requested launch'
             revision='unknown'
           fi
+          challenge="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+          # The relay serves a self-signed workload certificate, as in the console's
+          # challenge-only probe. This is a public change signal, not admission or
+          # attestation verification; the paid CLI still verifies production trust.
+          # Send no credentials, and never print/cache the response or evidence.
+          if health="$(curl --insecure --fail --silent --show-error --max-time 20 --max-filesize 65536 \
+            --header 'Content-Type: application/json' --data "{\"version\":2,\"challenge\":\"$challenge\"}" \
+            https://relay.counterfactlabs.com:8443/health)" &&
+            relay="$(printf '%s' "$health" | node -e '
+            let text=""; process.stdin.on("data", chunk => text += chunk);
+            process.stdin.on("end", () => {
+              try {
+                const value = JSON.parse(text), r = value.release;
+                if (value.ok !== true || value.version !== 2 || value.challenge !== process.argv[1] || !r ||
+                  ![r.releaseId, r.relayVersion, r.bundleVersion].every(v => typeof v === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(v)) ||
+                  typeof r.workloadPolicySha256 !== "string" || !/^[a-f0-9]{64}$/.test(r.workloadPolicySha256)) throw Error();
+                process.stdout.write(JSON.stringify({releaseId:r.releaseId,relayVersion:r.relayVersion,
+                  bundleVersion:r.bundleVersion,workloadPolicySha256:r.workloadPolicySha256}));
+              } catch { console.error("Invalid production relay release"); process.exitCode = 1; }
+            });' "$challenge")"; then
+            :
+          elif [[ "$GITHUB_EVENT_NAME" == 'schedule' && "$EVENT_SCHEDULE" == *' * * * *' ]]; then
+            echo '::error::Hourly polls require a valid production relay release'
+            exit 1
+          else
+            echo '::warning::Production relay release unavailable; continuing the requested launch'
+            relay='unknown'
+          fi
+          plugin="$(node --input-type=module -e 'import { cliPin } from "./scripts/plugin-release.mjs"; process.stdout.write(cliPin(".").pin)')"
           previous=''
           previous_revision=''
+          previous_plugin=''
+          previous_relay=''
           if [[ -f "$LIVE_AGENT_REVISION_FILE" ]]; then
-            previous_revision="$(cat "$LIVE_AGENT_REVISION_FILE")"
+            previous_revision="$(sed -n '1p' "$LIVE_AGENT_REVISION_FILE")"
+            previous_relay="$(sed -n '2p' "$LIVE_AGENT_REVISION_FILE")"
           fi
           if [[ -f "$LIVE_AGENT_VERSION_FILE" ]]; then
-            previous="$(cat "$LIVE_AGENT_VERSION_FILE")"
+            previous="$(sed -n '1p' "$LIVE_AGENT_VERSION_FILE")"
+            previous_plugin="$(sed -n '2p' "$LIVE_AGENT_VERSION_FILE")"
           fi
-          printf 'version=%s\nrevision=%s\n' "$latest" "$revision" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\nrevision=%s\nrelay=%s\nplugin=%s\n' "$latest" "$revision" "$relay" "$plugin" >> "$GITHUB_OUTPUT"
           # The cron definition owns the minute; only hourly runs skip unchanged release identities.
-          if [[ "$GITHUB_EVENT_NAME" == 'schedule' && "$EVENT_SCHEDULE" == *' * * * *' && "$previous" == "$latest" && "$previous_revision" == "$revision" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == 'schedule' && "$EVENT_SCHEDULE" == *' * * * *' && "$previous" == "$latest" && "$previous_revision" == "$revision" && "$previous_relay" == "$relay" && "$previous_plugin" == "$plugin" ]]; then
             echo 'run=false' >> "$GITHUB_OUTPUT"
           else
             echo 'run=true' >> "$GITHUB_OUTPUT"
@@ -151,6 +203,10 @@ jobs:
     if: needs.poll.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 200
+    outputs:
+      analysis: ${{ steps.analysis.outcome }}
+      rows: ${{ steps.rows.outputs.rows }}
+      completed_at: ${{ steps.rows.outputs.completed_at }}
     # Unchanged polls skip this group. Changed polls can replace a pending launch;
     # the second comparison avoids repeat spending, but that launch may be lost.
     concurrency:
@@ -200,23 +256,32 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           COUNTERFACT_LIVE_TEST_KEY: ${{ secrets.COUNTERFACT_LIVE_TEST_KEY }}
+          LIVE_AGENT_ROWS_FILE: ${{ runner.temp }}/live-agent-rows.txt
         run: |
           set +x
           scripts/live-agent-check.sh run --confirm-paid --max-dollars 15 --timeout-seconds 900
 
-      - name: Record attempted CLI version and production revision
+      - name: Record attempted CLI, plugin, console and relay release identities
         id: remember
         if: always() && needs.poll.outputs.run == 'true' && steps.analysis.outcome != 'skipped'
         env:
           CLI_VERSION: ${{ steps.recheck.outputs.version }}
           DEPLOY_REVISION: ${{ steps.recheck.outputs.revision }}
+          RELAY_RELEASE: ${{ steps.recheck.outputs.relay }}
+          PLUGIN_PIN: ${{ steps.recheck.outputs.plugin }}
         run: |
           mkdir -p "$(dirname "$LIVE_AGENT_VERSION_FILE")"
-          printf '%s\n' "$CLI_VERSION" > "$LIVE_AGENT_VERSION_FILE"
+          printf '%s\n%s\n' "$CLI_VERSION" "$PLUGIN_PIN" > "$LIVE_AGENT_VERSION_FILE"
           # An outage must not make the next hourly poll rediscover a known deploy.
-          if [[ "$DEPLOY_REVISION" != 'unknown' ]]; then
-            printf '%s\n' "$DEPLOY_REVISION" > "$LIVE_AGENT_REVISION_FILE"
+          if [[ -f "$LIVE_AGENT_REVISION_FILE" ]]; then
+            if [[ "$DEPLOY_REVISION" == 'unknown' ]]; then
+              DEPLOY_REVISION="$(sed -n '1p' "$LIVE_AGENT_REVISION_FILE")"
+            fi
+            if [[ "$RELAY_RELEASE" == 'unknown' ]]; then
+              RELAY_RELEASE="$(sed -n '2p' "$LIVE_AGENT_REVISION_FILE")"
+            fi
           fi
+          printf '%s\n%s\n' "$DEPLOY_REVISION" "$RELAY_RELEASE" > "$LIVE_AGENT_REVISION_FILE"
 
       - name: Save last attempted release identities
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
@@ -226,3 +291,42 @@ jobs:
             ${{ env.LIVE_AGENT_VERSION_FILE }}
             ${{ env.LIVE_AGENT_REVISION_FILE }}
           key: live-agent-releases-v2-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Export redacted report rows
+        id: rows
+        if: always()
+        run: |
+          node --input-type=module -e '
+            import { existsSync, readFileSync, appendFileSync } from "node:fs";
+            const path = process.env.RUNNER_TEMP + "/live-agent-rows.txt";
+            const rows = existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean) : [];
+            appendFileSync(process.env.GITHUB_OUTPUT, "rows=" + JSON.stringify(rows) + "\ncompleted_at=" + new Date().toISOString() + "\n");'
+
+  alert:
+    name: Report live check failures
+    needs: [poll, live]
+    if: always() && (needs.poll.result == 'failure' || needs.live.result == 'failure' || needs.live.outputs.analysis == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: live-agent-check-alerts
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Open, comment on or resolve the live check issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          POLL_RESULT: ${{ needs.poll.result }}
+          LIVE_RESULT: ${{ needs.live.result }}
+          ANALYSIS_OUTCOME: ${{ needs.live.outputs.analysis }}
+          CHECK_COMPLETED_AT: ${{ needs.live.outputs.completed_at }}
+          LIVE_AGENT_ROWS: ${{ needs.live.outputs.rows }}
+        run: node scripts/live-agent-alert.mjs

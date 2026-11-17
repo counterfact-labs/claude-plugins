@@ -96,7 +96,7 @@ if (name === 'npx') {
     const q = JSON.parse(line);
     if (!q.id) return;
     if (q.method === 'initialize') {
-      send({jsonrpc:'2.0',id:q.id,result:{serverInfo:{name:'counterfact-labs',version:args.find(a=>a.startsWith('@counterfact-labs/cli@')).split('@').at(-1)}}});
+      send({jsonrpc:'2.0',id:q.id,result:{serverInfo:{name:'counterfact-labs',version:mode==='private-server-version'?'fictional-private-token':args.find(a=>a.startsWith('@counterfact-labs/cli@')).split('@').at(-1)}}});
     } else if (q.method === 'tools/list') {
       send({jsonrpc:'2.0',id:q.id,result:{tools:[...(mode==='with-preview'?[{name:'preview_analysis',inputSchema:{type:'object'}}]:[]),{name:'analyze_agent',description:'Analyze',inputSchema:{type:'object'}},{name:'sign_in_status',inputSchema:{type:'object'}}]}});
     } else if (q.method === 'tools/call') {
@@ -176,6 +176,8 @@ if (name === 'npx') {
     fs.mkdirSync(p,{recursive:true});
     fs.writeFileSync(path.join(p,'.mcp.json'),JSON.stringify({mcpServers:{counterfact:{command:'npx',args:mode==='plugin-config-changed'?['--yes','@counterfact-labs/cli@9.8.7','mcp']:['-y',...(['plugin-prefix','cli-029'].includes(mode)?['--prefix=\${CLAUDE_PLUGIN_ROOT}']:[]),'@counterfact-labs/cli@9.8.7','mcp']}}}));
     fs.writeFileSync(path.join(process.env.HOME,'.claude/plugins/installed_plugins.json'),JSON.stringify({version:2,plugins:{'counterfact@counterfact-labs':[{installPath:p,version:'9.8.7',scope:'user'}]}}));
+    if (mode==='private-plugin-registry') fs.writeFileSync(path.join(process.env.HOME,'.claude/plugins/installed_plugins.json'),'leak123');
+    if (mode==='private-plugin-config') fs.writeFileSync(path.join(p,'.mcp.json'),'leak123');
   }
 } else {
   if (mode === 'hang') { setInterval(()=>{},1000); return; }
@@ -297,7 +299,7 @@ async function run(t, args = ['run', '--confirm-paid'], mode = 'ok', key = 'fict
   }
   const loader = join(root, 'upstream.mjs'); writeFileSync(loader,upstream);
   const env={...process.env,PATH:emptyPath ? ':'+bin : bin+':'+process.env.PATH,FAKE_LOG:log,FAKE_MODE:mode,
-    NODE_OPTIONS:'--import='+loader,COUNTERFACT_LIVE_TEST_KEY:key,TMPDIR:root,GITHUB_STEP_SUMMARY:join(root,'summary.md'),
+    NODE_OPTIONS:'--import='+loader,COUNTERFACT_LIVE_TEST_KEY:key,TMPDIR:root,GITHUB_STEP_SUMMARY:join(root,'summary.md'),LIVE_AGENT_ROWS_FILE:join(root,'rows.txt'),
     CODEX_HOME:join(root,'original-codex'),CLAUDE_CONFIG_DIR:join(root,'original-claude'),
     CF_CONSOLE_URL:'https://do-not-use.invalid',COUNTERFACT_URL:'https://do-not-use.invalid',
     ANTHROPIC_API_KEY:'fictional-provider-key',CODEX_API_KEY:'fictional-provider-key'};
@@ -314,6 +316,22 @@ async function run(t, args = ['run', '--confirm-paid'], mode = 'ok', key = 'fict
 
 // These exercise the real report/adapter/bridge. Dropping safe reason codes or
 // copying a raw diagnostic would respectively hide admission failures or leak data.
+for (const [code, message] of [
+  ['release_unavailable', 'Production release refuses this CLI/plugin (release_unavailable)'],
+  ['low_balance', 'Live-test account balance is too low; top it up'],
+]) test('safe alert rows explain ' + code + ' from both MCP and console evidence', async t => {
+  const { consoleRefusal } = await import('./live-agent-diagnostics.mjs');
+  const refusal = consoleRefusal('/api/cli/relay-reservations', 'create', { status: code === 'low_balance' ? 409 : 422,
+    value: { code, token: 'fictional-private-token' } });
+  assert.ok(refusal.includes(message), refusal);
+  const r = await run(t, undefined, 'mcp-refusal-' + code);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const rows = readFileSync(join(r.root, 'rows.txt'), 'utf8');
+  assert.equal(rows, r.stdout.split('\n').filter(line => /^(PASS|FAIL) /.test(line)).join('\n') + '\n');
+  assert.ok(rows.includes(message), rows);
+  assert.ok(rows.split('\n').filter(Boolean).every(line => /^(PASS|FAIL) (Claude|Codex|Free) \| /.test(line)));
+  assert.doesNotMatch(rows, /fictional-private|fictional-provider-key|fictional-live-key/);
+});
 for (const code of ['low_balance', 'org_spend_limit', 'free_cap_reached', 'rate_limited']) test('records product refusal codes after one charged analysis: '+code, async t => {
   const r = await run(t, undefined, 'refusal-'+code);
   assert.equal(r.status, 1, r.stdout+r.stderr);
@@ -346,6 +364,7 @@ for (const [mode, code, failure] of [
     const row = output.split('\n').find(line => line.includes('Claude | planted-authority |'));
     assert.ok(row.includes(failure), row);
     assert.ok(row.includes('console refusal: '+code+' (HTTP 402; relay-reservations/reserve)'), row);
+    if (code === 'low_balance') assert.ok(row.includes('Live-test account balance is too low; top it up'), row);
     assert.doesNotMatch(output, /fictional_provider_secret|fictional-private-diagnostic|fictional-provider-key|fictional-live-key/);
   }
   assert.equal(r.calls.filter(c => c.name === 'model-work').length, 1);
@@ -670,6 +689,33 @@ for(const mode of ['refused-status','refused-settlement','refused-network','refu
   });
 }
 
+test('untrusted tool names and server versions never appear in exported rows', async t => {
+  for (const mode of ['disallowed-fictional-private-token', 'private-server-version']) {
+    const r = await run(t, undefined, mode);
+    assert.equal(r.status, mode.startsWith('disallowed-') ? 1 : 0, r.stdout + r.stderr);
+    const rows = readFileSync(join(r.root, 'rows.txt'), 'utf8');
+    assert.doesNotMatch(rows, /fictional-private-token/);
+    if (mode.startsWith('disallowed-')) assert.match(rows, /Refused unexpected MCP tool/);
+  }
+});
+
+for (const mode of ['private-plugin-registry', 'private-plugin-config']) test('plugin parse failures never export file contents: ' + mode, async t => {
+  const r = await run(t, undefined, mode);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const rows = readFileSync(join(r.root, 'rows.txt'), 'utf8');
+  assert.doesNotMatch(rows, /leak123/);
+  assert.match(rows, /Installed plugin (registry|MCP configuration) unavailable/);
+});
+
+test('bridge failure messages cannot introduce unreviewed text into report diagnostics', async t => {
+  const bridge = await startBridge({ key: 'fictional-live-key', budget: { used: 0, cap: 5000000 }, folder: '/tmp' });
+  t.after(() => bridge.close());
+  const r = await fetch(bridge.url + '/event', { method: 'POST', headers: { 'x-live-agent-token': bridge.token },
+    body: JSON.stringify({ kind: 'failure', message: 'fictional-private-token' }) });
+  assert.equal(r.status, 502);
+  assert.deepEqual(bridge.state.failures, ['MCP server or protocol failed']);
+});
+
 for(const [mode,reason] of [
   ['claims-only',/did not initialize/],
   ['no-upload',/Missing matching console upload receipt/],
@@ -680,8 +726,8 @@ for(const [mode,reason] of [
   ['agent-fails',/claude exited 3/],
   ['bridge-fails',/Unexpected console endpoint/],
   ['sign-in-changed',/In-memory CLI sign-in failed/],
-  ['disallowed-analyze_skipped_files',/Refused MCP tool: analyze_skipped_files/],
-  ['disallowed-sign_in',/Refused MCP tool: sign_in/],
+  ['disallowed-analyze_skipped_files',/Refused unexpected MCP tool/],
+  ['disallowed-sign_in',/Refused unexpected MCP tool/],
 ])test('fails on '+mode+' for its own reason and still runs Codex',async t=>{
   const r=await run(t,undefined,mode);assert.notEqual(r.status,0,r.stdout+r.stderr);
   assert.match(r.stdout,/FAIL.*Claude/);assert.match(r.stdout,/Codex/);

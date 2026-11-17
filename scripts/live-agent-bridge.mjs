@@ -86,7 +86,7 @@ export async function startBridge({ key, budget, folder, free = false }) {
         else if (body.kind === 'analysis') state.results.push(body.result);
         else if (body.kind === 'tools') state.coverageSupported = body.tools?.some(tool => tool.name === 'analyze_agent' &&
           tool.outputSchema?.properties?.coverage) ?? false;
-        else throw fail(body.message || 'MCP protocol failed');
+        else throw fail(body.message === 'Refused unexpected MCP tool' ? body.message : 'MCP server or protocol failed');
         reply(200, {}); return;
       }
       const path = request.url?.slice('/console'.length);
