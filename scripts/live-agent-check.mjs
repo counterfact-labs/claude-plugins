@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { consoleOrigin, startBridge, analysisCeilingMicro } from './live-agent-bridge.mjs';
-import { cliPin } from './plugin-release.mjs';
+import { cliPin, isStableVersion } from './plugin-release.mjs';
 import { cases, assertCase, credentialSkippedPromptMessage, credentialRefusalMessage, credentialProposalRefusalMessage } from './live-agent-cases.mjs';
 import { capture, probeMcp, overCapProbe, checkLinks } from './live-agent-probes.mjs';
 import { mcpFailureMessage } from './live-agent-diagnostics.mjs';
@@ -238,11 +238,15 @@ function validate(backend, output, state, caseId) {
   return backend === 'claude' ? validateClaude(events, receipt) : validateCodex(events, receipt);
 }
 function pluginCli(home) {
-  const registry = JSON.parse(readFileSync(join(home, '.claude/plugins/installed_plugins.json'), 'utf8'));
+  let registry;
+  try { registry = JSON.parse(readFileSync(join(home, '.claude/plugins/installed_plugins.json'), 'utf8')); }
+  catch { throw Error('Installed plugin registry unavailable'); }
   const entries = registry.plugins?.['counterfact@counterfact-labs'];
   const entry = entries?.find(item => item.scope === 'user');
   if (!entry?.installPath || !resolve(entry.installPath).startsWith(resolve(home) + '/')) throw Error('Installed plugin path unavailable');
-  const launch = cliPin(entry.installPath, entry.installPath);
+  let launch;
+  try { launch = cliPin(entry.installPath, entry.installPath); }
+  catch { throw Error('Installed plugin MCP configuration unavailable'); }
   const expected = ['-y', `--prefix=${entry.installPath}`, launch.pin, 'mcp'];
   const legacy = ['-y', launch.pin, 'mcp'];
   if (launch.command !== 'npx' || ![expected, legacy].some(args => JSON.stringify(args) === JSON.stringify(launch.args))) {
@@ -264,7 +268,8 @@ async function freeProbes({ backend, home, bin, root, key, budget, realNpx, rows
     const env = environment(home, bin, backend, bridge, realNpx);
     try {
       const result = await probeMcp(join(bin, 'npx'), launch.args, { env, cwd: folder, signal: cancellation.signal });
-      add('MCP package startup', { pass: true, reason: `Initialized ${result.server.name} ${result.server.version} inside @counterfact-labs/cli` });
+      const version = isStableVersion(result.server.version) ? result.server.version : '(version not reported)';
+      add('MCP package startup', { pass: true, reason: `Initialized counterfact-labs ${version} inside @counterfact-labs/cli` });
       add('sign-in', { pass: !result.status.isError && result.status.structuredContent?.signedIn === true,
         reason: result.status.structuredContent?.signedIn === true ? 'Signed in' : 'Sign-in status did not confirm signed in' });
     } catch {
@@ -297,6 +302,7 @@ function report(rows, config, key) {
   const cell = value => clean(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('|', '&#124;');
   console.log(`Live agent integration suite | total Counterfact cap $${(config.cap / 1e6).toFixed(2)} | per analysis $${(analysisCeilingMicro / 1e6).toFixed(2)}`);
   const table = ['| Agent | Case | Result | Reason |', '| --- | --- | --- | --- |'];
+  const lines = [];
   for (const row of rows) {
     const name = row.backend === 'claude' ? 'Claude' : row.backend === 'codex' ? 'Codex' : 'Free';
     let detail = clean(row.reason);
@@ -304,11 +310,16 @@ function report(rows, config, key) {
       const charged = row.chargedMicro === undefined ? 'charged not reported' : `charged (equals estimate) $${(row.chargedMicro / 1e6).toFixed(2)}`;
       detail += `; estimate $${(row.priceMicro / 1e6).toFixed(2)}; ${charged}; provider ${row.provider}; ${row.duration}s`;
     }
-    console.log(`${row.pass ? 'PASS' : 'FAIL'} ${name} | ${row.case} | ${detail}`);
+    const line = `${row.pass ? 'PASS' : 'FAIL'} ${name} | ${row.case} | ${detail}`;
+    lines.push(line);
+    console.log(line);
     if (row.url) console.log(`     ${row.url}`);
     table.push(`| ${cell(name)} | ${cell(row.case)} | ${row.pass ? 'PASS' : 'FAIL'} | ${cell(detail)}${row.url ? `; ${cell(row.url)}` : ''} |`);
   }
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, table.join('\n') + '\n');
+  // Only the redacted report rows cross into the issue-reporting job. No logs,
+  // findings URLs, MCP content, agent output or raw error response is exported.
+  if (process.env.LIVE_AGENT_ROWS_FILE) writeFileSync(process.env.LIVE_AGENT_ROWS_FILE, lines.join('\n') + '\n');
   if (rows.some(row => !row.pass)) process.exitCode = 1;
 }
 async function main() {

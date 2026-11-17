@@ -18,10 +18,14 @@ const reasons = new Set([
   'folder_busy', 'completion_settings_mismatch',
 ]);
 const reasonCode = value => reasons.has(value) ? value : 'not_reported';
+const explanation = code => code === 'release_unavailable'
+  ? '; Production release refuses this CLI/plugin (release_unavailable)'
+  : code === 'low_balance' ? '; Live-test account balance is too low; top it up' : '';
 
 export function mcpFailureMessage(structured) {
   const exitCode = Number.isSafeInteger(structured?.exitCode) ? structured.exitCode : 'not_reported';
-  return `MCP analysis did not complete successfully (reason: ${reasonCode(structured?.reason)}; exitCode: ${exitCode})`;
+  const code = reasonCode(structured?.reason);
+  return `MCP analysis did not complete successfully (reason: ${code}; exitCode: ${exitCode})${explanation(code)}`;
 }
 
 const stages = new Map([
@@ -35,5 +39,6 @@ export function consoleRefusal(path, action, { status, value }) {
   // Stage labels are constants; arbitrary paths, query strings and IDs stay private.
   const stage = stages.get(path) ?? 'console';
   const operation = path === '/api/cli/relay-reservations' && actions.has(action) ? '/' + action : '';
-  return `console refusal: ${reasonCode(value?.code)} (HTTP ${status}; ${stage}${operation})`;
+  const code = reasonCode(value?.code);
+  return `console refusal: ${code} (HTTP ${status}; ${stage}${operation})${explanation(code)}`;
 }
