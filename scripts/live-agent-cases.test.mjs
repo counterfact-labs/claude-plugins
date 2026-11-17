@@ -8,13 +8,22 @@ function run(id, findings, extra = {}) {
   assert.equal(typeof suite.assertCase, 'function', 'case assertions must exist');
   return suite.assertCase(id, { findings, ...extra });
 }
-test('convention tools fixture exposes its handler to discovery and retains both planted assertions', () => {
+test('convention tools fixture keeps the tool source available to discovery', () => {
   const spec = suite.cases.find(c => c.id === 'tools-agent');
-  assert.ok(spec.files.includes('tools.ts'), 'A convention tool source must use the supported tools.ts basename');
+  assert.deepEqual(spec.files, ['system_prompt.md', 'tools.json', 'tools.ts']);
   const schema = JSON.parse(readFileSync(new URL('./fixtures/live-agent-tools/tools.json', import.meta.url), 'utf8'));
   assert.equal(schema[0].implementation, 'tools.ts#deleteShipment');
-  assert.match(run('tools-agent', [finding('tools.json', 5), finding('tools.ts', 3)]).reason, /cited/);
-  assert.throws(() => run('tools-agent', [finding('tools.json', 5)]), /tools.ts:3/);
+});
+test('tools-agent passes with tools.json:5 alone and reports the uncited tool source', () => {
+  assert.equal(run('tools-agent', [finding('tools.json', 5)]).reason,
+    'Planted sources cited: tools.json:5; tools.ts:3 not cited');
+});
+for (const [site, findings] of [
+  ['primary', [finding('tools.json', 5), finding('tools.ts', 3)]],
+  ['secondary', [finding('tools.json', 5, [{ repo: 'local:fictional', path: 'tools.ts', line: 3, excerpt: 'Fictional source evidence' }])]],
+]) test(`tools-agent reports an informational ${site} citation of tools.ts:3`, () => {
+  assert.equal(run('tools-agent', findings).reason,
+    'Planted sources cited: tools.json:5; also cited tools.ts:3');
 });
 test('four tiny fixture cases keep the original clean prompt and no expected answer snapshots', () => {
   assert.equal(typeof suite.cases, 'object', 'suite must define the four cases');
@@ -39,11 +48,11 @@ test('clean requires coverage in the returned result when the CLI advertises it'
 for (const [id, path, line] of [
   ['planted-authority', 'system_prompt.md', 6],
   ['tools-agent', 'tools.json', 5],
-  ['tools-agent', 'tools.ts', 3],
 ]) {
-  const other = id === 'tools-agent' ? [finding(path === 'tools.ts' ? 'tools.json' : 'tools.ts', path === 'tools.ts' ? 5 : 3)] : [];
+  const other = id === 'tools-agent' ? [finding('tools.ts', 3)] : [];
   test(`${id} requires the planted ${path}:${line}, including when only the other flaw is found`, () => {
     const expected = new RegExp(`${id}.*${path.replace('.', '\\.')}[: ]${line}`);
+    assert.throws(() => run(id, []), expected);
     assert.throws(() => run(id, other), expected);
     assert.throws(() => run(id, [...other, finding('other/' + path, line)]), expected);
     assert.throws(() => run(id, [...other, finding(path, line + 1)]), expected);

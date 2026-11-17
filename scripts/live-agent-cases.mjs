@@ -9,7 +9,8 @@ export const cases = [
   { id: 'clean', directory: 'live-agent', files: ['system_prompt.md'], expect: 'empty', sources: [] },
   { id: 'planted-authority', directory: 'live-agent-authority', files: ['system_prompt.md'], sources: [['system_prompt.md', 6]] },
   { id: 'planted-credential', directory: 'live-agent-credential', files: ['system_prompt.md'], expect: 'refused', sources: [] },
-  { id: 'tools-agent', directory: 'live-agent-tools', files: ['system_prompt.md', 'tools.json', 'tools.ts'], sources: [['tools.json', 5], ['tools.ts', 3]] },
+  // Analyses consistently cite the tools.json contradiction; the tools.ts injection is only occasionally a secondary site.
+  { id: 'tools-agent', directory: 'live-agent-tools', files: ['system_prompt.md', 'tools.json', 'tools.ts'], sources: [['tools.json', 5]] },
 ];
 function cites(finding, path, line) {
   // Real upload: counterfact-local contract/console.ts localFindingsPayloadSchema
@@ -31,7 +32,11 @@ export function assertCase(id, { findings = [], coverageSupported = false, cover
   }
   const missing = spec.sources.filter(([path, line]) => !findings.some(f => cites(f, path, line)));
   if (missing.length) throw Error(`${id}: no finding cited ${missing.map(([path, line]) => `${path}:${line}`).join(', ')}`);
-  if (spec.expect !== 'empty') return { reason: 'Planted sources cited: ' + spec.sources.map(s => s.join(':')).join(', ') };
+  if (spec.expect !== 'empty') {
+    let reason = 'Planted sources cited: ' + spec.sources.map(s => s.join(':')).join(', ');
+    if (id === 'tools-agent') reason += findings.some(f => cites(f, 'tools.ts', 3)) ? '; also cited tools.ts:3' : '; tools.ts:3 not cited';
+    return { reason };
+  }
   const statement = /(?:^|\n)\s*(?:#+\s*)?(?:what (?:was|we) checked|checked|coverage|analysis scope)(?::|\r?\n)\s*([\s\S]+)/i.exec(text);
   // empty-result-coverage-cli: cli/analysis-coverage.ts AnalysisCoverage is
   // {filesAnalyzed: number, filesSkipped?: number}; it reports files, not checks.
